@@ -1,4 +1,5 @@
 use byteorder::{BigEndian, ByteOrder};
+use std::collections::vec_deque::VecDeque;
 
 // ProtoParser is a postgres protocol parser. It does not
 // contain its own buffer. It only returns valid buffer ranges
@@ -28,16 +29,13 @@ impl ProtoParser {
     // a Complete message follows < 5 bytes of buffer (meaning, not enough
     // to parse the message type and message size of the next message).
     // Those remaining bytes will need to be sent again with the next buffer.
-    //
-    // NOTE: Returning a new Vec for each call to next is pretty lame. But
-    // we can make this better in the future.
     #[inline]
-    pub fn next(&mut self, buffer: &[u8]) -> Vec<ProtoMessage> {
+    pub fn next(&mut self, buffer: &[u8], msgs: &mut VecDeque<ProtoMessage>) -> usize {
         let mut offset = 0;
-        let mut res = vec![];
 
         if buffer.len() < 5 {
-            return res;
+            // Not enought data to read a msg type and msg size.
+            return 0;
         }
 
         // Is this OK? Can I just remove the last 4 from the range since the offset
@@ -54,7 +52,7 @@ impl ProtoParser {
                 // The first part of this buffer contains the rest of a previously
                 // started message.
                 if remaining == 0 && offset == 0 {
-                    res.push(ProtoMessage::PartialComplete(
+                    msgs.push_back(ProtoMessage::PartialComplete(
                         self.current_msg_type.expect("partial message state"),
                         bytes_to_read - 1,
                     ));
@@ -66,7 +64,7 @@ impl ProtoParser {
                     self.msg_complete();
                     continue;
                 } else {
-                    res.push(ProtoMessage::Partial(
+                    msgs.push_back(ProtoMessage::Partial(
                         self.current_msg_type.expect("partial message state"),
                         offset,
                         offset + bytes_to_read - 1,
@@ -89,7 +87,7 @@ impl ProtoParser {
             self.current_msg_bytes_read += bytes_to_read;
 
             if remaining == 0 {
-                res.push(ProtoMessage::Message(
+                msgs.push_back(ProtoMessage::Message(
                     self.current_msg_type.expect("full message found"),
                     offset,
                     offset + bytes_to_read - 1,
@@ -97,7 +95,7 @@ impl ProtoParser {
 
                 self.msg_complete();
             } else {
-                res.push(ProtoMessage::Partial(
+                msgs.push_back(ProtoMessage::Partial(
                     self.current_msg_type.expect("full message found"),
                     offset,
                     offset + bytes_to_read - 1,
@@ -106,7 +104,7 @@ impl ProtoParser {
             offset += bytes_to_read;
         }
 
-        res
+        offset
     }
 
     fn msg_complete(&mut self) {
@@ -134,8 +132,10 @@ mod tests {
     #[test]
     fn it_returns_empty_when_missing_data() {
         let packet = &[84, 0, 0, 0];
+        let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        assert_eq!(parser.next(packet).len(), 0);
+        assert_eq!(parser.next(packet, &mut msgs), 0);
+        assert_eq!(msgs.len(), 0);
     }
 
     #[test]
@@ -144,12 +144,15 @@ mod tests {
         let packet = &[
             // Complete C tag.
             67, 0, 0, 0, 13, 83, 69, 76, 69, 67, 84, 32, 49,
-
+ 
             // Only 4-bytes of a second C tag message.
             67, 0, 0, 0,
         ];
+
+        let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        let msgs = parser.next(packet);
+        let n = parser.next(packet, &mut msgs);
+        assert_eq!(n, packet.len() - 4);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0], ProtoMessage::Message('C', 0, 12));
     }
@@ -161,12 +164,13 @@ mod tests {
         let packet2 = &[0, 1, 54, 55, 0, 2, 0, 0, 4, 19, 255];
         let packet3 = &[255, 0, 0, 0, 44, 0];
 
+        let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        let msgs1 = parser.next(packet1);
-        let msgs2 = parser.next(packet2);
-        let msgs3 = parser.next(packet3);
-        let msgs = [msgs1, msgs2, msgs3].concat();
+        let n1 = parser.next(packet1, &mut msgs);
+        let n2 = parser.next(packet2, &mut msgs);
+        let n3 = parser.next(packet3, &mut msgs);
 
+        assert_eq!([n1, n2, n3], [packet1.len(), packet2.len(), packet3.len()]);
         assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[0], ProtoMessage::Partial('T', 0, 11));
         assert_eq!(msgs[1], ProtoMessage::Partial('T', 0, 10));
@@ -179,15 +183,17 @@ mod tests {
         let packet = &[
             // T tag
             84, 0, 0, 0, 29, 0, 1, 103, 117, 105, 100, 0, 0, 1, 54, 55, 0, 2, 0, 0, 4, 19, 255, 255,
-            0, 0, 0, 44, 0, 
-
+            0, 0, 0, 44, 0,
+    
             // D tag
             68, 0, 0, 0, 50, 0, 1, 0, 0, 0, 40, 83, 72, 82, 45, 100, 54, 52, 97, 100, 99, 101, 55,
         ];
 
+        let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        let msgs = parser.next(packet);
+        let n = parser.next(packet, &mut msgs);
 
+        assert_eq!(n, packet.len());
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0], ProtoMessage::Message('T', 0, 28));
         assert_eq!(msgs[1], ProtoMessage::Partial('D', 29, packet.len() - 1));
@@ -199,20 +205,22 @@ mod tests {
         let packet = &[
             // T tag
             84, 0, 0, 0, 29, 0, 1, 103, 117, 105, 100, 0, 0, 1, 54, 55, 0, 2, 0, 0, 4, 19, 255, 255,
-            0, 0, 0, 44, 0, 
-
+            0, 0, 0, 44, 0,
+    
             // D tag
             68, 0, 0, 0, 50, 0, 1, 0, 0, 0, 40, 83, 72, 82, 45, 100, 54, 52, 97, 100, 99, 101, 55,
             45, 48, 97, 48, 49, 45, 52, 54, 100, 101, 45, 57, 99, 53, 101, 45, 55, 55, 101, 102,
             55, 101, 101, 57, 101, 51, 101,
-
+    
             // C tag
             67, 0, 0, 0, 13, 83, 69, 76, 69, 67, 84, 32, 49,
         ];
 
+        let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        let msgs = parser.next(packet);
+        let n = parser.next(packet, &mut msgs);
 
+        assert_eq!(n, packet.len());
         assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[0], ProtoMessage::Message('T', 0, 28));
         assert_eq!(msgs[1], ProtoMessage::Message('D', 29, 78));
@@ -230,12 +238,18 @@ mod tests {
             100, 101, 45, 57, 99, 53, 101, 45, 55, 55, 101, 102, 55, 101, 101, 57, 101, 51, 101,
         ];
 
+        let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        let msgs = parser.next(packet1);
+        let n = parser.next(packet1, &mut msgs);
+        assert_eq!(n, packet1.len());
         assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0], ProtoMessage::Partial('D', 0, packet1.len() - 1));
+        assert_eq!(
+            msgs.pop_front().unwrap(),
+            ProtoMessage::Partial('D', 0, packet1.len() - 1)
+        );
 
-        let msgs = parser.next(packet2);
+        let n = parser.next(packet2, &mut msgs);
+        assert_eq!(n, packet2.len());
         assert_eq!(msgs.len(), 1);
         assert_eq!(
             msgs[0],
@@ -252,9 +266,11 @@ mod tests {
             55, 101, 101, 57, 101, 51, 101,
         ];
 
+        let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        let msgs = parser.next(packet);
+        let n = parser.next(packet, &mut msgs);
 
+        assert_eq!(n, packet.len());
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0], ProtoMessage::Message('D', 0, packet.len() - 1));
     }

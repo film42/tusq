@@ -30,7 +30,7 @@ impl ProtoParser {
     // to parse the message type and message size of the next message).
     // Those remaining bytes will need to be sent again with the next buffer.
     #[inline]
-    pub fn next(&mut self, buffer: &[u8], msgs: &mut VecDeque<ProtoMessage>) -> usize {
+    pub fn parse(&mut self, buffer: &[u8], msgs: &mut VecDeque<ProtoMessage>) -> usize {
         let mut offset = 0;
 
         if buffer.len() < 5 {
@@ -134,7 +134,7 @@ mod tests {
         let packet = &[84, 0, 0, 0];
         let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        assert_eq!(parser.next(packet, &mut msgs), 0);
+        assert_eq!(parser.parse(packet, &mut msgs), 0);
         assert_eq!(msgs.len(), 0);
     }
 
@@ -151,7 +151,7 @@ mod tests {
 
         let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        let n = parser.next(packet, &mut msgs);
+        let n = parser.parse(packet, &mut msgs);
         assert_eq!(n, packet.len() - 4);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0], ProtoMessage::Message('C', 0, 12));
@@ -166,9 +166,9 @@ mod tests {
 
         let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        let n1 = parser.next(packet1, &mut msgs);
-        let n2 = parser.next(packet2, &mut msgs);
-        let n3 = parser.next(packet3, &mut msgs);
+        let n1 = parser.parse(packet1, &mut msgs);
+        let n2 = parser.parse(packet2, &mut msgs);
+        let n3 = parser.parse(packet3, &mut msgs);
 
         assert_eq!([n1, n2, n3], [packet1.len(), packet2.len(), packet3.len()]);
         assert_eq!(msgs.len(), 3);
@@ -191,7 +191,7 @@ mod tests {
 
         let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        let n = parser.next(packet, &mut msgs);
+        let n = parser.parse(packet, &mut msgs);
 
         assert_eq!(n, packet.len());
         assert_eq!(msgs.len(), 2);
@@ -218,7 +218,7 @@ mod tests {
 
         let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        let n = parser.next(packet, &mut msgs);
+        let n = parser.parse(packet, &mut msgs);
 
         assert_eq!(n, packet.len());
         assert_eq!(msgs.len(), 3);
@@ -240,7 +240,7 @@ mod tests {
 
         let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        let n = parser.next(packet1, &mut msgs);
+        let n = parser.parse(packet1, &mut msgs);
         assert_eq!(n, packet1.len());
         assert_eq!(msgs.len(), 1);
         assert_eq!(
@@ -248,7 +248,7 @@ mod tests {
             ProtoMessage::Partial('D', 0, packet1.len() - 1)
         );
 
-        let n = parser.next(packet2, &mut msgs);
+        let n = parser.parse(packet2, &mut msgs);
         assert_eq!(n, packet2.len());
         assert_eq!(msgs.len(), 1);
         assert_eq!(
@@ -268,7 +268,7 @@ mod tests {
 
         let mut msgs = VecDeque::new();
         let mut parser = ProtoParser::new();
-        let n = parser.next(packet, &mut msgs);
+        let n = parser.parse(packet, &mut msgs);
 
         assert_eq!(n, packet.len());
         assert_eq!(msgs.len(), 1);

@@ -10,6 +10,7 @@ pub struct ProtoParser {
     current_msg_type: Option<char>,
     // The expected size of the current message.
     current_msg_length: usize,
+    // Bytes read of the current message (might take multiple buffers).
     current_msg_bytes_read: usize,
 }
 
@@ -27,10 +28,17 @@ impl ProtoParser {
     // a Complete message follows < 5 bytes of buffer (meaning, not enough
     // to parse the message type and message size of the next message).
     // Those remaining bytes will need to be sent again with the next buffer.
+    //
+    // NOTE: Returning a new Vec for each call to next is pretty lame. But
+    // we can make this better in the future.
     #[inline]
     pub fn next(&mut self, buffer: &[u8]) -> Vec<ProtoMessage> {
         let mut offset = 0;
         let mut res = vec![];
+
+        if buffer.len() < 5 {
+            return res;
+        }
 
         // Is this OK? Can I just remove the last 4 from the range since the offset
         // left with too few bytes will just exit anyways?
@@ -122,6 +130,29 @@ pub enum ProtoMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn it_returns_empty_when_missing_data() {
+        let packet = &[84, 0, 0, 0];
+        let mut parser = ProtoParser::new();
+        assert_eq!(parser.next(packet).len(), 0);
+    }
+
+    #[test]
+    fn it_can_parse_a_partial_and_skip_insufficient_buffer() {
+        #[rustfmt::skip]
+        let packet = &[
+            // Complete C tag.
+            67, 0, 0, 0, 13, 83, 69, 76, 69, 67, 84, 32, 49,
+
+            // Only 4-bytes of a second C tag message.
+            67, 0, 0, 0,
+        ];
+        let mut parser = ProtoParser::new();
+        let msgs = parser.next(packet);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0], ProtoMessage::Message('C', 0, 12));
+    }
 
     #[test]
     fn it_can_parse_a_partial_over_several_buffers() {

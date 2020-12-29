@@ -3,81 +3,62 @@ pub mod proto;
 pub mod core {
     use crate::net::write_all_with_timeout;
     use crate::proto::{ProtoMessage, ProtoParser};
-    use bytes::{BufMut, Bytes, BytesMut};
+    use bytes::BytesMut;
     use futures::future::select;
     use futures::future::Either;
     use std::collections::VecDeque;
-    use tokio::io::{AsyncRead, AsyncReadExt};
+    use tokio::io::AsyncReadExt;
     use tokio::net::TcpStream;
 
-    pub struct ClientConnection {
-        // Client state
-        client_conn: TcpStream,
-        client_parser: ProtoParser,
-        client_buffer: BytesMut,
-        client_msgs: VecDeque<ProtoMessage>,
-        client_buffer_prefix_offset: usize,
-
-        // Server state during transaction
-        // TODO: Do we store these on the client conn or the server?
-        server_parser: ProtoParser,
-        server_buffer: BytesMut,
-        server_msgs: VecDeque<ProtoMessage>,
-        server_buffer_prefix_offset: usize,
+    enum Op {
+        CopyFromClientToServer(usize),
+        CopyFromServerToClient(usize),
     }
+
+    pub struct PgConn {
+        conn: TcpStream,
+        parser: ProtoParser,
+        buffer: BytesMut,
+        msgs: VecDeque<ProtoMessage>,
+        buffer_prefix_offset: usize,
+    }
+
+    impl PgConn {
+        pub async fn read_and_parse(&mut self) -> Result<usize, Box<dyn std::error::Error>> {
+            let n = self
+                .conn
+                .read(&mut self.buffer[self.buffer_prefix_offset..])
+                .await?;
+
+            // Parse and adjust the buffer prefix offset in case the buffer
+            // included a small part of a message from the last read.
+            let n_parsed = self.parser.parse(&mut self.buffer[..n], &mut self.msgs)?;
+            self.buffer_prefix_offset = n - n_parsed;
+
+            // Return only the number of bytes pared.
+            Ok(n_parsed)
+        }
+    }
+
+    pub struct ClientConnection {}
 
     impl ClientConnection {
         // Check out a server from the connection pool.
-        pub async fn checkout_server(&mut self) -> Result<TcpStream, Box<dyn std::error::Error>> {
+        pub async fn checkout_server(&mut self) -> Result<PgConn, Box<dyn std::error::Error>> {
             unimplemented!();
         }
 
-        pub async fn read_and_parse_from_client(
-            &mut self,
-        ) -> Result<usize, Box<dyn std::error::Error>> {
-            let n = self
-                .client_conn
-                .read(&mut self.client_buffer[self.client_buffer_prefix_offset..])
-                .await?;
-
-            // Parse and adjust the client buffer prefix offset in case the buffer
-            // included a small part of a message from the last read.
-            let n_parsed = self
-                .client_parser
-                .parse(&mut self.client_buffer[..n], &mut self.client_msgs)?;
-            self.client_buffer_prefix_offset = n - n_parsed;
-
-            // Return only the number of bytes pared.
-            Ok(n_parsed)
-        }
-
-        pub async fn read_and_parse_from_server(
-            &mut self,
-            server_conn: &mut TcpStream,
-        ) -> Result<usize, Box<dyn std::error::Error>> {
-            let n = server_conn
-                .read(&mut self.server_buffer[self.server_buffer_prefix_offset..])
-                .await?;
-
-            // Parse and adjust the server buffer prefix offset in case the buffer
-            // included a small part of a message from the last read.
-            let n_parsed = self
-                .server_parser
-                .parse(&mut self.server_buffer[..n], &mut self.server_msgs)?;
-            self.server_buffer_prefix_offset = n - n_parsed;
-
-            // Return only the number of bytes pared.
-            Ok(n_parsed)
-        }
-
         // Manage the entire client life-cycle.
-        pub async fn spawn(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        pub async fn spawn(
+            &mut self,
+            mut client_conn: PgConn,
+        ) -> Result<(), Box<dyn std::error::Error>> {
             // Outter transaction loop.
             loop {
-                let n = self.read_and_parse_from_client().await?;
+                let n = client_conn.read_and_parse().await?;
 
                 // Check to ensure it signals the beginning of a txn. Close otherwise.
-                while let Some(msg) = self.client_msgs.pop_front() {
+                while let Some(msg) = client_conn.msgs.pop_front() {
                     match msg.msg_type() {
                         // We only check for complete or partial messages here. The point is to
                         // detect the beginning of a transaction.
@@ -99,138 +80,90 @@ pub mod core {
 
                 // Write those N bytes to the server.
                 write_all_with_timeout(
-                    &mut server_conn,
-                    &mut self.client_buffer[..n],
+                    &mut server_conn.conn,
+                    &mut client_conn.buffer[..n],
                     Some(std::time::Duration::from_secs(5)),
                 )
                 .await?;
 
                 // Proxy between client and server until the client or server ends the txn.
-                loop {
-                    match select(
-                        Box::pin(self.read_and_parse_from_client()),
-                        Box::pin(self.read_and_parse_from_server(&mut server_conn)),
+                'transaction: loop {
+                    // Read from either socket and parse msgs.
+                    // We use an "op" here to avoid the annoying double-owned inside/ outside
+                    // the match / case clause.
+                    let op = match select(
+                        Box::pin(client_conn.read_and_parse()),
+                        Box::pin(server_conn.read_and_parse()),
                     )
                     .await
                     {
                         // Success case.
-                        Either::Left((Ok(client_n), _dropped_server_read)) => {}
-                        Either::Right((Ok(server_n), _dropped_client_read)) => {}
+                        Either::Left((Ok(client_n), _dropped_server_read)) => {
+                            Op::CopyFromClientToServer(client_n)
+                        }
+                        Either::Right((Ok(server_n), _dropped_client_read)) => {
+                            Op::CopyFromServerToClient(server_n)
+                        }
 
                         // Error case.
                         Either::Left((Err(err), _)) | Either::Right((Err(err), _)) => {
                             return Err(err)
                         }
+                    };
+
+                    // Copy all pending buffer from one to the other.
+                    match op {
+                        Op::CopyFromClientToServer(n) => {
+                            write_all_with_timeout(
+                                &mut server_conn.conn,
+                                &mut client_conn.buffer[..n],
+                                Some(std::time::Duration::from_secs(30)),
+                            )
+                            .await?;
+                        }
+                        Op::CopyFromServerToClient(n) => {
+                            write_all_with_timeout(
+                                &mut client_conn.conn,
+                                &mut server_conn.buffer[..n],
+                                None,
+                            )
+                            .await?;
+                        }
+                    };
+
+                    // Check protocol messages for changes.
+
+                    // Server Messages
+                    while let Some(msg) = server_conn.msgs.pop_front() {
+                        match msg.msg_type() {
+                            'Z' => {
+                                if let Some('I') = msg.transaction_type(&server_conn.buffer) {
+                                    println!("Transaction completed.");
+                                    break 'transaction;
+                                }
+                            }
+                            'X' => {
+                                println!("Server is closing the connection!");
+                                panic!("Server is closing early");
+                            }
+                            _ => { /* Proxy and continue. */ }
+                        }
+                    }
+
+                    // Client Messages
+                    while let Some(msg) = client_conn.msgs.pop_front() {
+                        match msg.msg_type() {
+                            'X' => {
+                                println!("Client is closing the connection!");
+                                panic!("Client is closing early");
+                            }
+                            _ => { /* Proxy and continue. */ }
+                        }
                     }
                 }
             }
-            Ok(())
         }
     }
-
-    //    async fn usage() {
-    //        let msgs = VecDeque::new();
-    //
-    //        // Read some N bytes.
-    //        let n = client.read(&mut client_buffer).await?;
-    //        let n_parsed = client_parser.parse(&mut client_buffer[..n], msgs)?;
-    //
-    //        // Check to ensure it signals the beginning of a txn. Close otherwise.
-    //        for msg in msgs {
-    //            match msg.msg_type() {
-    //                // We only check for complete or partial messages here. The point is to
-    //                // detect the beginning of a transaction.
-    //                'Q' => {}
-    //                'X' => println!("Client sent close request. Closing connection."),
-    //                msg_type => {
-    //                    println!(
-    //                        "Client sent non-query or close command ({}). Closing connection.",
-    //                        msg_type
-    //                    );
-    //                    return;
-    //                }
-    //            }
-    //        }
-    //
-    //        // Write those N bytes to the server.
-    //        crate::net::write_all(
-    //            &mut server,
-    //            &mut client_buffer[..n_parsed],
-    //            std::time::Duration::from_secs(5),
-    //        )
-    //        .await?;
-    //
-    //        // Run the txn loop.
-    //        loop {
-    //            let read_server_bytes_to_copy = async {
-    //                let n = server
-    //                    .read(&mut server_buffer[server_buffer_prefix_offset..])
-    //                    .await?;
-    //                let n_with_offset = server_buffer_prefix_offset + n;
-    //                let n_parsed =
-    //                    server_parser.parse(&mut server_buffer[..n_with_offset], server_msgs)?;
-    //                n_parsed
-    //            };
-    //
-    //            let read_clients_bytes_to_copy = async {
-    //                let n = client
-    //                    .read(&mut client_buffer[client_buffer_prefix_offset..])
-    //                    .await?;
-    //                let n_with_offset = client_buffer_prefix_offset + n;
-    //                let n_parsed =
-    //                    client_parser.parse(&mut client_buffer[..n_with_offset], client_msgs)?;
-    //                n_parsed
-    //            };
-    //
-    //            // Avoid multiple exclusive owns so we'll return an operation that needs
-    //            // to be performed next. The 'n' returned is the parsed buffer size.
-    //            let operation =
-    //                match futures::future::select(read_server_bytes_to_copy, read_client_bytes_tp_copy)
-    //                    .await
-    //                {
-    //                    // Convert to operation.
-    //                    Either::Left((Ok(n), _dropped_client_read)) => CopyFromServertoClient(n),
-    //                    Either::Right((Ok(n), _dropped_server_read)) => CopyFromClientToServer(n),
-    //                    // Return err.
-    //                    Either::Left((Err(err), _)) | Either::Right((Err(err), _)) => return Err(err),
-    //                };
-    //
-    //            // Copy all buffer to either the client or the server.
-    //            match operation {
-    //                CopyFromServerToClient(n) => {
-    //                    crate::net::write_all_with_timeout(&mut client, &server_buffer[..n], None)
-    //                        .await?;
-    //                }
-    //                CopyFromClientToServer(n) => {
-    //                    crate::net::write_all_with_timeout(&mut server, &client_buffer[..n], None)
-    //                        .await?;
-    //                }
-    //            }
-    //
-    //            // Now that we've copied the bytes from either side, we can check for msgs
-    //            // To see if we've arrived at an error or a clean end of txn.
-    //
-    //            // Server Messages
-    //            while let Some(msg) = server_msgs.pop_front() {
-    //                match msg.msg_type() {
-    //                    'Z' => match msg.transaction_type() {
-    //                        Some('I') => {
-    //                            println!("Transaction completed.");
-    //                            break;
-    //                        }
-    //                    },
-    //                    'X' => println!("Server is closing the connection!"),
-    //                }
-    //            }
-    //
-    //            // Client Messages
-    //            while let Some(msg) = server_msgs.pop_front() {
-    //                match msg.msg_type() {
-    //                    'X' => println!("Client is closing the connection!"),
-    //                }
-    //            }
-    //        }
-    //    }
 }
 
 pub mod net {

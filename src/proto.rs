@@ -1,6 +1,6 @@
 use byteorder::{BigEndian, ByteOrder};
-use std::collections::btree_map::BTreeMap;
-use std::collections::vec_deque::VecDeque;
+use std::collections::BTreeMap;
+use std::collections::VecDeque;
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -250,6 +250,39 @@ pub enum ProtoMessage {
     Partial(char, usize, usize),
     // This message started in a previous buffer but is now complete.
     PartialComplete(char, usize),
+}
+
+impl ProtoMessage {
+    // Pull the txn type from a ready for query message.
+    // TODO: Make this work with a Partial + PartialComplete.
+    pub fn transaction_type(&self, buffer: &[u8]) -> Option<char> {
+        if let ProtoMessage::Message(tag, start, end) = self {
+            if *tag == 'Z' && end - start > 5 {
+                return Some(buffer[start + 5] as char);
+            }
+        }
+        None
+    }
+
+    pub fn is_complete(&self) -> bool {
+        if let ProtoMessage::Message(_, _, _) = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn is_partial(&self) -> bool {
+        !self.is_complete()
+    }
+
+    pub fn msg_type(&self) -> char {
+        *match self {
+            ProtoMessage::Message(msg_type, _, _) => msg_type,
+            ProtoMessage::Partial(msg_type, _, _) => msg_type,
+            ProtoMessage::PartialComplete(msg_type, _) => msg_type,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]

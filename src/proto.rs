@@ -21,6 +21,20 @@ pub mod messages {
         msg[5] = b'I';
         msg.into()
     }
+
+    pub fn server_parameter(key: &String, value: &String) -> Vec<u8> {
+        let mut msg = Vec::new();
+        msg.push('S' as u8);
+        // Set range aside for size at the end.
+        msg.extend_from_slice(&[0, 0, 0, 0]);
+        msg.extend_from_slice(key.as_bytes());
+        msg.push(0);
+        msg.extend_from_slice(value.as_bytes());
+        msg.push(0);
+        let msg_proto_size = msg.len() - 1;
+        BigEndian::write_i32(&mut msg[1..5], msg_proto_size as i32);
+        msg
+    }
 }
 
 #[derive(Debug)]
@@ -300,7 +314,7 @@ impl ProtoMessage {
             // Update offset.
             offset += key_end + 1;
 
-            let value_end = memchr::memchr(0, &buffer[start + key_end..])
+            let value_end = memchr::memchr(0, &buffer[offset..])
                 .expect("no support for partial cstr reads for now");
             let value = std::str::from_utf8(&buffer[offset..offset + value_end])
                 .expect("valid utf8")
@@ -338,7 +352,7 @@ pub enum ProtoStartupMessage {
     PartialComplete(usize),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StartupMessage {
     pub protocol_version: i32,
     pub parameters: BTreeMap<String, String>,

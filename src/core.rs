@@ -49,6 +49,16 @@ impl PgConn {
         Ok(())
     }
 
+    pub async fn write_server_parameter(
+        &mut self,
+        key: &String,
+        value: &String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let msg = messages::server_parameter(&key, &value);
+        write_all_with_timeout(&mut self.conn, &msg, None).await?;
+        Ok(())
+    }
+
     pub async fn handle_startup(&mut self) -> Result<StartupMessage, Box<dyn std::error::Error>> {
         let n = self.conn.read(&mut self.buffer).await?;
 
@@ -59,6 +69,16 @@ impl PgConn {
 
         // Finish auth stuff here.. should probably move later.
         self.write_auth_ok().await?;
+
+        // HACK: This is duplicating work.
+        // Write server parameters from a working real server.. should move later.
+        let server_pool = PgConnPool::new(sm.clone());
+        let server_conn = server_pool.checkout().await?;
+        for (key, value) in server_conn.server_parameters.iter() {
+            self.write_server_parameter(key, value).await?;
+        }
+
+        // Signal read for query.. should probably move later.
         self.write_ready_for_query().await?;
 
         // Return original startup message.

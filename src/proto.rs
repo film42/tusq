@@ -277,10 +277,36 @@ impl ProtoMessage {
     // Pull the txn type from a ready for query message.
     // TODO: Make this work with a Partial + PartialComplete.
     pub fn transaction_type(&self, buffer: &[u8]) -> Option<char> {
-        if let ProtoMessage::Message(tag, start, end) = self {
-            if *tag == 'Z' && end - start == 5 {
+        if let ProtoMessage::Message('Z', start, end) = self {
+            if end - start == 5 {
                 return Some(buffer[start + 5] as char);
             }
+        }
+        None
+    }
+
+    pub fn server_parameter(&self, buffer: &[u8]) -> Option<(String, String)> {
+        if let ProtoMessage::Message('S', start, _end) = self {
+            // TODO: Make this safer. For now this assumes the message is valid.
+            // Skip the first 5 bytes for [char, i32] and move on to String.
+            let mut offset = 5 + start;
+
+            let key_end = memchr::memchr(0, &buffer[offset..])
+                .expect("no support for partial cstr reads for now");
+            let key = std::str::from_utf8(&buffer[offset..offset + key_end])
+                .expect("valid utf8")
+                .into();
+
+            // Update offset.
+            offset += key_end + 1;
+
+            let value_end = memchr::memchr(0, &buffer[start + key_end..])
+                .expect("no support for partial cstr reads for now");
+            let value = std::str::from_utf8(&buffer[offset..offset + value_end])
+                .expect("valid utf8")
+                .into();
+
+            return Some((key, value));
         }
         None
     }

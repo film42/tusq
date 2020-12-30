@@ -38,6 +38,11 @@ impl PgConnPool {
                             return Ok(server_conn);
                         }
                     }
+                    'S' => {
+                        if let Some((key, value)) = msg.server_parameter(&server_conn.buffer) {
+                            server_conn.server_parameters.insert(key, value);
+                        }
+                    }
                     m => { /* Ignore everything else. */ }
                 }
             }

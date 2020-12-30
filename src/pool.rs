@@ -43,7 +43,7 @@ impl PgConnPool {
                             server_conn.server_parameters.insert(key, value);
                         }
                     }
-                    m => { /* Ignore everything else. */ }
+                    _ => { /* Ignore everything else. */ }
                 }
             }
         }

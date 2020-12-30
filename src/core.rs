@@ -101,15 +101,14 @@ impl PgConn {
             .parse(&mut self.buffer[..n_to_parse], &mut self.msgs)?;
         self.buffer_prefix_offset = n_to_parse - n_parsed;
 
+        // Copy unparsed data to beginning of buffer. Max 4 bytes.
+        for n_to_copy in n_parsed..n_to_parse {
+            self.buffer[n_to_copy - n_parsed] = self.buffer[n_to_copy];
+        }
+
         // Return only the number of bytes pared.
         Ok(n_parsed)
     }
-}
-
-// Check out a server from the connection pool.
-// STUB for now.
-pub async fn checkout_server() -> Result<PgConn, Box<dyn std::error::Error>> {
-    unimplemented!();
 }
 
 // Manage the entire client life-cycle.
@@ -208,7 +207,11 @@ pub async fn spawn(
                         println!("Server is closing the connection!");
                         panic!("Server is closing early");
                     }
-                    _ => { /* Proxy and continue. */ }
+                    _ => {
+                        /* Proxy and continue. */
+
+                        // println!("SRV->CLT: {:?}", msg);
+                    }
                 }
             }
 
@@ -219,7 +222,11 @@ pub async fn spawn(
                         println!("Client is closing the connection!");
                         panic!("Client is closing early");
                     }
-                    _ => { /* Proxy and continue. */ }
+                    _ => {
+                        /* Proxy and continue. */
+
+                        // println!("CLT->SRV: {:?}", msg);
+                    }
                 }
             }
         }

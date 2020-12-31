@@ -17,8 +17,9 @@ pub struct PgConn {
     pub(crate) conn: TcpStream,
     parser: ProtoParser,
     pub(crate) buffer: BytesMut,
+    incomplete_buffer: BytesMut,
+    incomplete_buffer_len: usize,
     pub(crate) msgs: VecDeque<ProtoMessage>,
-    buffer_prefix_offset: usize,
     pub(crate) server_parameters: BTreeMap<String, String>,
 }
 
@@ -27,12 +28,16 @@ impl PgConn {
         let mut buffer = BytesMut::with_capacity(8096);
         buffer.resize(8096, 0);
 
+        let mut incomplete_buffer = BytesMut::with_capacity(8);
+        incomplete_buffer.resize(8, 0);
+
         Self {
             conn,
             buffer,
+            incomplete_buffer,
+            incomplete_buffer_len: 0,
             parser: ProtoParser::new(),
             msgs: VecDeque::new(),
-            buffer_prefix_offset: 0,
             server_parameters: BTreeMap::new(),
         }
     }
@@ -63,8 +68,7 @@ impl PgConn {
         let n = self.conn.read(&mut self.buffer).await?;
 
         // Parse startup message.
-        let (n_parsed, startup_message) = self.parser.parse_startup(&mut self.buffer[..n])?;
-        self.buffer_prefix_offset = n - n_parsed;
+        let (_n_parsed, startup_message) = self.parser.parse_startup(&mut self.buffer[..n])?;
         let sm = startup_message.expect("todo: handle an incomplete startup message");
 
         // Finish auth stuff here.. should probably move later.
@@ -86,24 +90,29 @@ impl PgConn {
     }
 
     pub async fn read_and_parse(&mut self) -> Result<usize, Box<dyn std::error::Error>> {
-        // Read but do not write over any un-parsed buffer.
+        // Copy any incomplete buffer data to new buffer.
+        for idx in 0..self.incomplete_buffer_len {
+            self.buffer[idx] = self.incomplete_buffer[idx];
+        }
+
+        // Read as much data as possible to the main buffer.
         let n = self
             .conn
-            .read(&mut self.buffer[self.buffer_prefix_offset..])
+            .read(&mut self.buffer[self.incomplete_buffer_len..])
             .await?;
 
-        // Parse and adjust the buffer prefix offset in case the buffer
-        // included a small part of a message from the last read.
-        let n_to_parse = self.buffer_prefix_offset + n;
+        // Attempt to parse the buffer.
+        let n_to_parse = self.incomplete_buffer_len + n;
 
         let n_parsed = self
             .parser
             .parse(&mut self.buffer[..n_to_parse], &mut self.msgs)?;
-        self.buffer_prefix_offset = n_to_parse - n_parsed;
 
-        // Copy unparsed data to beginning of buffer. Max 4 bytes.
-        for n_to_copy in n_parsed..n_to_parse {
-            self.buffer[n_to_copy - n_parsed] = self.buffer[n_to_copy];
+        // Copy any unparsed bytes to the incomplete buffer which will be copied
+        // to the next buffer when this method is called.
+        self.incomplete_buffer_len = n_to_parse - n_parsed;
+        for idx in 0..self.incomplete_buffer_len {
+            self.incomplete_buffer[idx] = self.buffer[idx + n_parsed];
         }
 
         // Return only the number of bytes pared.
@@ -196,6 +205,8 @@ pub async fn spawn(
 
             // Server Messages
             while let Some(msg) = server_conn.msgs.pop_front() {
+                // println!("SRV->CLT: {:?}", msg);
+
                 match msg.msg_type() {
                     'Z' => {
                         if let Some('I') = msg.transaction_type(&server_conn.buffer) {
@@ -207,26 +218,20 @@ pub async fn spawn(
                         println!("Server is closing the connection!");
                         panic!("Server is closing early");
                     }
-                    _ => {
-                        /* Proxy and continue. */
-
-                        // println!("SRV->CLT: {:?}", msg);
-                    }
+                    _ => { /* Proxy and continue. */ }
                 }
             }
 
             // Client Messages
             while let Some(msg) = client_conn.msgs.pop_front() {
+                // println!("CLT->SRV: {:?}", msg);
+
                 match msg.msg_type() {
                     'X' => {
                         println!("Client is closing the connection!");
                         panic!("Client is closing early");
                     }
-                    _ => {
-                        /* Proxy and continue. */
-
-                        // println!("CLT->SRV: {:?}", msg);
-                    }
+                    _ => { /* Proxy and continue. */ }
                 }
             }
         }

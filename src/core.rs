@@ -54,13 +54,16 @@ impl PgConn {
         Ok(())
     }
 
-    pub async fn write_server_parameter(
+    pub async fn write_server_parameters(
         &mut self,
-        key: &String,
-        value: &String,
+        params: &BTreeMap<String, String>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let msg = messages::server_parameter(&key, &value);
-        write_all_with_timeout(&mut self.conn, &msg, None).await?;
+        let mut payload = vec![];
+        for (key, value) in params.iter() {
+            let msg = messages::server_parameter(key, value);
+            payload.extend_from_slice(&msg);
+        }
+        write_all_with_timeout(&mut self.conn, &payload, None).await?;
         Ok(())
     }
 
@@ -78,9 +81,8 @@ impl PgConn {
         // Write server parameters from a working real server.. should move later.
         let server_pool = PgConnPool::new(sm.clone());
         let server_conn = server_pool.checkout().await?;
-        for (key, value) in server_conn.server_parameters.iter() {
-            self.write_server_parameter(key, value).await?;
-        }
+        self.write_server_parameters(&server_conn.server_parameters)
+            .await?;
 
         // Signal read for query.. should probably move later.
         self.write_ready_for_query().await?;

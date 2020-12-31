@@ -26,9 +26,7 @@ impl PgConnPool {
         let msg = self.startup_message.as_bytes();
         write_all_with_timeout(&mut server_conn.conn, &msg, None).await?;
 
-        // Throw things away until we get "ready for query".
-        // NOTE: We should be storing startup parameters because they are required to
-        // send to the client.
+        // Grab server params and expect a ready for query message.
         loop {
             server_conn.read_and_parse().await?;
             while let Some(msg) = server_conn.msgs.pop_front() {

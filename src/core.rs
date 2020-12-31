@@ -89,6 +89,7 @@ impl PgConn {
         Ok(sm)
     }
 
+    #[inline]
     pub async fn read_and_parse(&mut self) -> Result<usize, Box<dyn std::error::Error>> {
         // Copy any incomplete buffer data to new buffer.
         for idx in 0..self.incomplete_buffer_len {
@@ -100,6 +101,11 @@ impl PgConn {
             .conn
             .read(&mut self.buffer[self.incomplete_buffer_len..])
             .await?;
+
+        // Conn has indicated an EOF.
+        if n == 0 {
+            return Ok(0);
+        }
 
         // Attempt to parse the buffer.
         let n_to_parse = self.incomplete_buffer_len + n;
@@ -127,7 +133,11 @@ pub async fn spawn(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Outter transaction loop.
     loop {
+        // Read and parse. Bail if we get an EOF.
         let n = client_conn.read_and_parse().await?;
+        if n == 0 {
+            return Ok(());
+        }
 
         // Check to ensure it signals the beginning of a txn. Close otherwise.
         while let Some(msg) = client_conn.msgs.pop_front() {
@@ -210,7 +220,6 @@ pub async fn spawn(
                 match msg.msg_type() {
                     'Z' => {
                         if let Some('I') = msg.transaction_type(&server_conn.buffer) {
-                            println!("Transaction completed.");
                             break 'transaction;
                         }
                     }

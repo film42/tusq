@@ -366,6 +366,13 @@ impl StartupMessage {
         }
     }
 
+    pub fn database_name(&self) -> Option<String> {
+        match self.parameters.get("database") {
+            Some(value) => Some(value.clone()),
+            None => None,
+        }
+    }
+
     // Convert the startup message back to proto bytes.
     pub fn as_bytes(&self) -> Vec<u8> {
         let mut msg = Vec::new();

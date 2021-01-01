@@ -21,6 +21,7 @@ pub struct PgConn {
     incomplete_buffer_len: usize,
     pub(crate) msgs: VecDeque<ProtoMessage>,
     pub(crate) server_parameters: BTreeMap<String, String>,
+    pub(crate) startup_message: Option<StartupMessage>,
 }
 
 impl PgConn {
@@ -39,7 +40,21 @@ impl PgConn {
             parser: ProtoParser::new(),
             msgs: VecDeque::new(),
             server_parameters: BTreeMap::new(),
+            startup_message: None,
         }
+    }
+
+    pub fn database_name(&self) -> Option<String> {
+        if let Some(ref startup_message) = self.startup_message {
+            return Some(
+                startup_message
+                    .parameters
+                    .get("database")
+                    .expect("database was set")
+                    .clone(),
+            );
+        }
+        None
     }
 
     pub async fn write_auth_ok(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -67,20 +82,23 @@ impl PgConn {
         Ok(())
     }
 
-    pub async fn handle_startup(&mut self) -> Result<StartupMessage, Box<dyn std::error::Error>> {
+    pub async fn handle_startup(
+        &mut self,
+        pool: &mut PgConnPool,
+    ) -> Result<StartupMessage, Box<dyn std::error::Error>> {
         let n = self.conn.read(&mut self.buffer).await?;
 
         // Parse startup message.
         let (_n_parsed, startup_message) = self.parser.parse_startup(&mut self.buffer[..n])?;
         let sm = startup_message.expect("todo: handle an incomplete startup message");
+        self.startup_message = Some(sm.clone());
 
         // Finish auth stuff here.. should probably move later.
         self.write_auth_ok().await?;
 
         // HACK: This is duplicating work.
         // Write server parameters from a working real server.. should move later.
-        let server_pool = PgConnPool::new(sm.clone());
-        let server_conn = server_pool.checkout().await?;
+        let server_conn = pool.checkout(&sm).await?;
         self.write_server_parameters(&server_conn.server_parameters)
             .await?;
 
@@ -160,7 +178,10 @@ pub async fn spawn(
             }
         }
 
-        let mut server_conn = pool.checkout().await?;
+        // Keep valid lifetime for the startup message.
+        let mut server_conn = pool
+            .checkout(client_conn.startup_message.as_ref().expect("value was set"))
+            .await?;
 
         // Write those N bytes to the server.
         write_all_with_timeout(

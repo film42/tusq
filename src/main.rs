@@ -1,7 +1,9 @@
+pub mod config;
 pub mod core;
 pub mod pool;
 pub mod proto;
 
+use config::Config;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
@@ -10,6 +12,7 @@ async fn main() -> std::io::Result<()> {
     let bind_addr = "127.0.0.1:8432".parse::<SocketAddr>().unwrap();
     println!("Listening on: {:?}", bind_addr);
     let listener = TcpListener::bind(bind_addr).await?;
+    let config = Config::example();
 
     loop {
         let (client_conn, _) = listener.accept().await?;
@@ -19,10 +22,13 @@ async fn main() -> std::io::Result<()> {
             // Build the client pgconn.
             let mut client_conn = core::PgConn::new(client_conn);
 
+            // Build a db pool (unique per conn for now).
+            let mut server_pool = pool::PgConnPool::new(config.clone());
+
             // Start the show.
             async move {
                 // Parse the startup flow.
-                let startup_message = match client_conn.handle_startup().await {
+                match client_conn.handle_startup(&mut server_pool).await {
                     Ok(sm) => {
                         println!(
                             "Client established and ready for query: {:?}, startup: {:?}",
@@ -38,9 +44,6 @@ async fn main() -> std::io::Result<()> {
                         return;
                     }
                 };
-
-                // TODO: Make this global and track state there. It's a stub for now.
-                let server_pool = pool::PgConnPool::new(startup_message);
 
                 // Run the txn loop.
                 match core::spawn(client_conn, &server_pool).await {

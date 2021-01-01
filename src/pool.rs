@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::core::net::write_all_with_timeout;
 use crate::core::PgConn;
 use crate::proto::StartupMessage;
@@ -6,24 +7,59 @@ use tokio::net::TcpStream;
 
 #[derive(Debug)]
 pub struct PgConnPool {
-    startup_message: StartupMessage,
+    config: Config,
 }
 
 impl PgConnPool {
-    pub fn new(startup_message: StartupMessage) -> Self {
-        Self { startup_message }
+    pub fn new(config: Config) -> Self {
+        Self { config }
     }
 
     // Checks out a server.
-    // TODO: For now it's just a hard-code create new conn to a static host.
-    pub async fn checkout(&self) -> Result<PgConn, Box<dyn std::error::Error>> {
-        // Connect to server.
-        let addr = "127.0.0.1:5432".parse::<SocketAddr>().unwrap();
+    pub async fn checkout(
+        &self,
+        client_startup_message: &StartupMessage,
+    ) -> Result<PgConn, Box<dyn std::error::Error>> {
+        let dbname = client_startup_message
+            .database_name()
+            .expect("database was set");
+
+        let database = self
+            .config
+            .databases
+            .get(&dbname)
+            .expect("database config to exist");
+
+        let addr = format!(
+            "{}:{}",
+            database.get("host").expect("host was set"),
+            database.get("port").expect("port was set")
+        )
+        .parse::<SocketAddr>()
+        .expect("valid socket addr");
+
+        println!("Connecting to database at: {:?}", addr);
+
+        // Build the server startup_message.
+        let mut startup_message = client_startup_message.clone();
+        for (key, value) in database.iter() {
+            let param_name = match key.as_str() {
+                "user" => key.clone(),
+                "dbname" => "database".to_string(),
+                _ => {
+                    println!("Found unknown database startup parameter: {:?}", &key);
+                    continue;
+                }
+            };
+
+            startup_message.parameters.insert(param_name, value.clone());
+        }
+
         let conn = TcpStream::connect(addr).await?;
         let mut server_conn = PgConn::new(conn);
 
         // Send startup message.
-        let msg = self.startup_message.as_bytes();
+        let msg = startup_message.as_bytes();
         write_all_with_timeout(&mut server_conn.conn, &msg, None).await?;
 
         // Grab server params and expect a ready for query message.

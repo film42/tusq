@@ -24,10 +24,6 @@ impl PgConnPool {
             startup_message,
         }
     }
-
-    pub async fn checkout(&self) -> Result<PgConn, Box<dyn std::error::Error>> {
-        unimplemented!()
-    }
 }
 
 #[async_trait]

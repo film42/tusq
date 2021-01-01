@@ -2,29 +2,63 @@ use crate::config::Config;
 use crate::core::net::write_all_with_timeout;
 use crate::core::PgConn;
 use crate::proto::StartupMessage;
+use async_trait::async_trait;
+use bb8::{ManageConnection, Pool, PooledConnection};
+use std::collections::btree_map::Entry;
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
+
+#[derive(Debug)]
+pub enum PoolError {
+    Err(Box<dyn std::error::Error + Send + 'static>),
+    IoErr(std::io::Error),
+}
+
+impl std::fmt::Display for PoolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match &*self {
+            PoolError::Err(err) => write!(f, "pool error: {:?}", err),
+            PoolError::IoErr(err) => write!(f, "pool error: {:?}", err),
+        }
+    }
+}
+
+impl std::error::Error for PoolError {}
 
 #[derive(Debug)]
 pub struct PgConnPool {
     config: Config,
+    startup_message: StartupMessage,
 }
 
 impl PgConnPool {
-    pub fn new(config: Config) -> Self {
-        Self { config }
+    pub fn new(config: Config, startup_message: StartupMessage) -> Self {
+        Self {
+            config,
+            startup_message,
+        }
     }
 
-    // Checks out a server.
-    pub async fn checkout(
-        &self,
-        client_startup_message: &StartupMessage,
-    ) -> Result<PgConn, Box<dyn std::error::Error>> {
-        let dbname = client_startup_message
+    pub async fn checkout(&self) -> Result<PgConn, Box<dyn std::error::Error>> {
+        unimplemented!()
+    }
+}
+
+#[async_trait]
+impl ManageConnection for PgConnPool {
+    type Connection = PgConn;
+    type Error = PoolError;
+
+    async fn connect(&self) -> Result<Self::Connection, Self::Error> {
+        let dbname = self
+            .startup_message
             .database_name()
             .expect("database was set");
 
-        let database = self
+        let database_options = self
             .config
             .databases
             .get(&dbname)
@@ -32,8 +66,8 @@ impl PgConnPool {
 
         let addr = format!(
             "{}:{}",
-            database.get("host").expect("host was set"),
-            database.get("port").expect("port was set")
+            database_options.get("host").expect("host was set"),
+            database_options.get("port").expect("port was set")
         )
         .parse::<SocketAddr>()
         .expect("valid socket addr");
@@ -41,8 +75,8 @@ impl PgConnPool {
         println!("Connecting to database at: {:?}", addr);
 
         // Build the server startup_message.
-        let mut startup_message = client_startup_message.clone();
-        for (key, value) in database.iter() {
+        let mut startup_message = self.startup_message.clone();
+        for (key, value) in database_options.iter() {
             let param_name = match key.as_str() {
                 "user" => key.clone(),
                 "dbname" => "database".to_string(),
@@ -55,16 +89,18 @@ impl PgConnPool {
             startup_message.parameters.insert(param_name, value.clone());
         }
 
-        let conn = TcpStream::connect(addr).await?;
+        let conn = TcpStream::connect(addr).await.map_err(PoolError::IoErr)?;
         let mut server_conn = PgConn::new(conn);
 
         // Send startup message.
         let msg = startup_message.as_bytes();
-        write_all_with_timeout(&mut server_conn.conn, &msg, None).await?;
+        write_all_with_timeout(&mut server_conn.conn, &msg, None)
+            .await
+            .unwrap();
 
         // Grab server params and expect a ready for query message.
         loop {
-            server_conn.read_and_parse().await?;
+            server_conn.read_and_parse().await.unwrap();
             while let Some(msg) = server_conn.msgs.pop_front() {
                 match msg.msg_type() {
                     'Z' => {
@@ -81,5 +117,55 @@ impl PgConnPool {
                 }
             }
         }
+    }
+
+    async fn is_valid(&self, _conn: &mut PooledConnection<'_, Self>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
+        false
+    }
+}
+
+#[derive(Clone)]
+pub struct PgPooler {
+    config: Config,
+    pools: Arc<Mutex<BTreeMap<String, bb8::Pool<PgConnPool>>>>,
+}
+
+impl PgPooler {
+    pub fn new(config: Config) -> PgPooler {
+        PgPooler {
+            config,
+            pools: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    pub async fn get_pool(
+        &mut self,
+        startup_message: StartupMessage,
+    ) -> Result<bb8::Pool<PgConnPool>, Box<dyn std::error::Error>> {
+        // TODO: We assume the DB is always set.
+        let database = startup_message
+            .database_name()
+            .expect("database name was set");
+
+        // Get lock around "pools", get or insert new pool, and clone.
+        let mut pools = self.pools.lock().await;
+        let pool = match pools.entry(database) {
+            Entry::Occupied(pool) => pool.into_mut(),
+            Entry::Vacant(pools) => {
+                // TODO: Better to unlock here while connecting? Probably? Nested locking per
+                // database?
+                // TODO: Make size params on the config.
+                let manager = PgConnPool::new(self.config.clone(), startup_message);
+                let pool = Pool::builder().max_size(50).build(manager).await?;
+                pools.insert(pool)
+            }
+        }
+        .clone();
+
+        Ok(pool)
     }
 }

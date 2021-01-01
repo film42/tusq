@@ -4,6 +4,7 @@ pub mod pool;
 pub mod proto;
 
 use config::Config;
+use pool::PgPooler;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
@@ -13,6 +14,7 @@ async fn main() -> std::io::Result<()> {
     println!("Listening on: {:?}", bind_addr);
     let listener = TcpListener::bind(bind_addr).await?;
     let config = Config::example();
+    let pooler = PgPooler::new(config.clone());
 
     loop {
         let (client_conn, _) = listener.accept().await?;
@@ -22,13 +24,14 @@ async fn main() -> std::io::Result<()> {
             // Build the client pgconn.
             let mut client_conn = core::PgConn::new(client_conn);
 
-            // Build a db pool (unique per conn for now).
-            let mut server_pool = pool::PgConnPool::new(config.clone());
+            //  // Build a db pool (unique per conn for now).
+            //  let mut server_pool = pool::PgConnPool::new(config.clone());
+            let pooler = pooler.clone();
 
             // Start the show.
             async move {
                 // Parse the startup flow.
-                match client_conn.handle_startup(&mut server_pool).await {
+                let server_pool = match client_conn.handle_startup(pooler).await {
                     Ok(sm) => {
                         println!(
                             "Client established and ready for query: {:?}, startup: {:?}",
@@ -46,7 +49,7 @@ async fn main() -> std::io::Result<()> {
                 };
 
                 // Run the txn loop.
-                match core::spawn(client_conn, &server_pool).await {
+                match core::spawn(client_conn, server_pool).await {
                     Ok(_) => println!("Client closed: {:?}", client_info),
                     Err(err) => println!(
                         "Client closed with error: {:?}, conn: {:?}",

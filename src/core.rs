@@ -1,4 +1,4 @@
-use crate::pool::PgConnPool;
+use crate::pool::{PgConnPool, PgPooler};
 use crate::proto::{messages, ProtoMessage, ProtoParser, StartupMessage};
 use bytes::BytesMut;
 use futures::future::select;
@@ -84,8 +84,8 @@ impl PgConn {
 
     pub async fn handle_startup(
         &mut self,
-        pool: &mut PgConnPool,
-    ) -> Result<StartupMessage, Box<dyn std::error::Error>> {
+        mut pooler: PgPooler,
+    ) -> Result<bb8::Pool<PgConnPool>, Box<dyn std::error::Error>> {
         let n = self.conn.read(&mut self.buffer).await?;
 
         // Parse startup message.
@@ -98,15 +98,17 @@ impl PgConn {
 
         // HACK: This is duplicating work.
         // Write server parameters from a working real server.. should move later.
-        let server_conn = pool.checkout(&sm).await?;
+        let pool = pooler.get_pool(sm.clone()).await?;
+        let server_conn = pool.get().await?;
         self.write_server_parameters(&server_conn.server_parameters)
             .await?;
+        drop(server_conn);
 
         // Signal read for query.. should probably move later.
         self.write_ready_for_query().await?;
 
         // Return original startup message.
-        Ok(sm)
+        Ok(pool)
     }
 
     #[inline]
@@ -149,7 +151,7 @@ impl PgConn {
 // Manage the entire client life-cycle.
 pub async fn spawn(
     mut client_conn: PgConn,
-    pool: &PgConnPool,
+    pool: bb8::Pool<PgConnPool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Outter transaction loop.
     loop {
@@ -179,9 +181,7 @@ pub async fn spawn(
         }
 
         // Keep valid lifetime for the startup message.
-        let mut server_conn = pool
-            .checkout(client_conn.startup_message.as_ref().expect("value was set"))
-            .await?;
+        let mut server_conn = pool.get().await?;
 
         // Write those N bytes to the server.
         write_all_with_timeout(

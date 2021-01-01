@@ -9,8 +9,8 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
-    let bind_addr = "127.0.0.1:8432".parse::<SocketAddr>().unwrap();
+async fn main() -> anyhow::Result<()> {
+    let bind_addr = "127.0.0.1:8432".parse::<SocketAddr>()?;
     println!("Listening on: {:?}", bind_addr);
     let listener = TcpListener::bind(bind_addr).await?;
     let config = Config::example();

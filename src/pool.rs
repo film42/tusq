@@ -80,13 +80,11 @@ impl ManageConnection for PgConnPool {
 
         // Send startup message.
         let msg = startup_message.as_bytes();
-        write_all_with_timeout(&mut server_conn.conn, &msg, None)
-            .await
-            .unwrap();
+        write_all_with_timeout(&mut server_conn.conn, &msg, None).await?;
 
         // Grab server params and expect a ready for query message.
         loop {
-            server_conn.read_and_parse().await.unwrap();
+            server_conn.read_and_parse().await?;
             while let Some(msg) = server_conn.msgs.pop_front() {
                 match msg.msg_type() {
                     'Z' => {

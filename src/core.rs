@@ -57,13 +57,13 @@ impl PgConn {
         None
     }
 
-    pub async fn write_auth_ok(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn write_auth_ok(&mut self) -> anyhow::Result<()> {
         let msg = messages::auth_ok();
         write_all_with_timeout(&mut self.conn, &msg, None).await?;
         Ok(())
     }
 
-    pub async fn write_ready_for_query(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn write_ready_for_query(&mut self) -> anyhow::Result<()> {
         let msg = messages::ready_for_query();
         write_all_with_timeout(&mut self.conn, &msg, None).await?;
         Ok(())
@@ -72,7 +72,7 @@ impl PgConn {
     pub async fn write_server_parameters(
         &mut self,
         params: &BTreeMap<String, String>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> anyhow::Result<()> {
         let mut payload = vec![];
         for (key, value) in params.iter() {
             let msg = messages::server_parameter(key, value);
@@ -85,7 +85,7 @@ impl PgConn {
     pub async fn handle_startup(
         &mut self,
         mut pooler: PgPooler,
-    ) -> Result<bb8::Pool<PgConnPool>, Box<dyn std::error::Error>> {
+    ) -> anyhow::Result<bb8::Pool<PgConnPool>> {
         let n = self.conn.read(&mut self.buffer).await?;
 
         // Parse startup message.
@@ -99,7 +99,10 @@ impl PgConn {
         // HACK: This is duplicating work.
         // Write server parameters from a working real server.. should move later.
         let pool = pooler.get_pool(sm.clone()).await?;
-        let server_conn = pool.get().await?;
+        let server_conn = pool
+            .get()
+            .await
+            .map_err(|err| anyhow::anyhow!("Connection Poool: {:?}", err))?;
         self.write_server_parameters(&server_conn.server_parameters)
             .await?;
         drop(server_conn);
@@ -112,7 +115,7 @@ impl PgConn {
     }
 
     #[inline]
-    pub async fn read_and_parse(&mut self) -> Result<usize, Box<dyn std::error::Error>> {
+    pub async fn read_and_parse(&mut self) -> anyhow::Result<usize> {
         // Copy any incomplete buffer data to new buffer.
         for idx in 0..self.incomplete_buffer_len {
             self.buffer[idx] = self.incomplete_buffer[idx];
@@ -149,10 +152,7 @@ impl PgConn {
 }
 
 // Manage the entire client life-cycle.
-pub async fn spawn(
-    mut client_conn: PgConn,
-    pool: bb8::Pool<PgConnPool>,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn spawn(mut client_conn: PgConn, pool: bb8::Pool<PgConnPool>) -> anyhow::Result<()> {
     // Outter transaction loop.
     loop {
         // Read and parse. Bail if we get an EOF.
@@ -181,7 +181,10 @@ pub async fn spawn(
         }
 
         // Keep valid lifetime for the startup message.
-        let mut server_conn = pool.get().await?;
+        let mut server_conn = pool
+            .get()
+            .await
+            .map_err(|err| anyhow::anyhow!("Connection Poool: {:?}", err))?;
 
         // Write those N bytes to the server.
         write_all_with_timeout(
@@ -282,15 +285,17 @@ pub mod net {
         conn: &mut TcpStream,
         buffer: &mut [u8],
         timeout: std::time::Duration,
-    ) -> Result<Option<usize>, Box<dyn std::error::Error>> {
-        match time::timeout(timeout, conn.read(buffer)).await {
+    ) -> anyhow::Result<Option<usize>> {
+        let inner = match time::timeout(timeout, conn.read(buffer)).await {
             // Check for success or error from write.
             Ok(Ok(n)) => Ok(Some(n)),
-            Ok(Err(err)) => Err(Box::new(err)),
+            Ok(Err(err)) => Err(err),
 
             // Operation timed out.
             Err(_) => Ok(None),
-        }
+        }?;
+
+        Ok(inner)
     }
 
     // Add helper function to handle a write with timeout.
@@ -298,20 +303,22 @@ pub mod net {
         conn: &mut TcpStream,
         buffer: &[u8],
         timeout: Option<std::time::Duration>,
-    ) -> Result<Option<usize>, Box<dyn std::error::Error>> {
+    ) -> anyhow::Result<Option<usize>> {
         if timeout.is_none() {
             conn.write_all(buffer).await?;
             return Ok(Some(buffer.len()));
         }
 
         let timeout = timeout.expect("never None");
-        match time::timeout(timeout, conn.write_all(buffer)).await {
+        let inner = match time::timeout(timeout, conn.write_all(buffer)).await {
             // Check for success or error from write.
             Ok(Ok(_)) => Ok(Some(buffer.len())),
-            Ok(Err(err)) => Err(Box::new(err)),
+            Ok(Err(err)) => Err(err),
 
             // Operation timed out.
             Err(_) => Ok(None),
-        }
+        }?;
+
+        Ok(inner)
     }
 }

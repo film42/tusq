@@ -37,23 +37,6 @@ pub mod messages {
     }
 }
 
-#[derive(Debug)]
-pub enum ParseError {
-    Err(Box<dyn std::error::Error>),
-}
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match &*self {
-            ParseError::Err(err) => write!(f, "parse error: {:?}", err),
-        }
-    }
-}
-
-impl std::error::Error for ParseError {}
-
-pub type ParseResult<T> = std::result::Result<T, ParseError>;
-
 // ProtoParser is a postgres protocol parser. It does not
 // contain its own buffer. It only returns valid buffer ranges
 // and the current postgres message type for the caller to
@@ -87,7 +70,10 @@ impl ProtoParser {
     // This will parse a StartupMessage using one or more buffers. Unlike
     // the `parse` method, this will copy data in that buffer to create
     // a shareable startup message.
-    pub fn parse_startup(&mut self, buffer: &[u8]) -> ParseResult<(usize, Option<StartupMessage>)> {
+    pub fn parse_startup(
+        &mut self,
+        buffer: &[u8],
+    ) -> anyhow::Result<(usize, Option<StartupMessage>)> {
         let mut offset = 0;
 
         // If we don't have a current startup message, be sure to parse
@@ -189,7 +175,7 @@ impl ProtoParser {
         &mut self,
         buffer: &[u8],
         msgs: &mut VecDeque<ProtoMessage>,
-    ) -> ParseResult<usize> {
+    ) -> anyhow::Result<usize> {
         let mut offset = 0;
 
         if buffer.len() < 5 {

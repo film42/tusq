@@ -12,23 +12,6 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
 #[derive(Debug)]
-pub enum PoolError {
-    Err(Box<dyn std::error::Error + Send + 'static>),
-    IoErr(std::io::Error),
-}
-
-impl std::fmt::Display for PoolError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match &*self {
-            PoolError::Err(err) => write!(f, "pool error: {:?}", err),
-            PoolError::IoErr(err) => write!(f, "pool error: {:?}", err),
-        }
-    }
-}
-
-impl std::error::Error for PoolError {}
-
-#[derive(Debug)]
 pub struct PgConnPool {
     config: Config,
     startup_message: StartupMessage,
@@ -50,7 +33,7 @@ impl PgConnPool {
 #[async_trait]
 impl ManageConnection for PgConnPool {
     type Connection = PgConn;
-    type Error = PoolError;
+    type Error = anyhow::Error;
 
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
         let dbname = self
@@ -72,8 +55,6 @@ impl ManageConnection for PgConnPool {
         .parse::<SocketAddr>()
         .expect("valid socket addr");
 
-        println!("Connecting to database at: {:?}", addr);
-
         // Build the server startup_message.
         let mut startup_message = self.startup_message.clone();
         for (key, value) in database_options.iter() {
@@ -88,8 +69,13 @@ impl ManageConnection for PgConnPool {
 
             startup_message.parameters.insert(param_name, value.clone());
         }
+        startup_message
+            .parameters
+            .insert("application_name".into(), "tusq".into());
 
-        let conn = TcpStream::connect(addr).await.map_err(PoolError::IoErr)?;
+        println!("Connecting to database: {:?}", startup_message);
+
+        let conn = TcpStream::connect(addr).await?;
         let mut server_conn = PgConn::new(conn);
 
         // Send startup message.
@@ -145,7 +131,7 @@ impl PgPooler {
     pub async fn get_pool(
         &mut self,
         startup_message: StartupMessage,
-    ) -> Result<bb8::Pool<PgConnPool>, Box<dyn std::error::Error>> {
+    ) -> anyhow::Result<bb8::Pool<PgConnPool>> {
         // TODO: We assume the DB is always set.
         let database = startup_message
             .database_name()

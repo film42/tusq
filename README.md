@@ -15,6 +15,19 @@ $ cargo run --release -- --config examples/config.toml
 Client closed: "PollEvented { io: Some(TcpStream { addr: 127.0.0.1:8432, peer: 127.0.0.1:35822, fd: 10 }) }"
 ```
 
+### Config 
+
+Currently using TOML for config files:
+
+```toml
+bind_address = "127.0.0.1:8432"
+
+[databases]
+some_db = { user = "postgres", password = "123456", dbname = "yolo_db", host = "127.0.0.1" }
+```
+
+You can also specify `port`, and `pool_size` for each database.
+
 ### TODO
 
 1. Support SSL.

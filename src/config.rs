@@ -1,28 +1,59 @@
+use serde::Deserialize;
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     pub bind_address: String,
-    pub databases: BTreeMap<String, BTreeMap<String, String>>,
+    pub databases: BTreeMap<String, Database>,
 }
-
 impl Config {
     pub fn example() -> Self {
         // Create a map with required database options.
-        let mut database_options = BTreeMap::new();
-        database_options.insert("port".into(), "5432".into());
-        database_options.insert("host".into(), "127.0.0.1".into());
-        database_options.insert("dbname".into(), "dispatch_development".into());
-        database_options.insert("user".into(), "postgres".into());
-        database_options.insert("sslmode".into(), "disable".into());
+        let db = Database {
+            port: "5432".into(),
+            host: "127.0.0.1".into(),
+            dbname: "dispatch_development".into(),
+            user: "postgres".into(),
+            pool_size: 25,
+        };
 
         // Use above options to create an aliased database.
         let mut databases = BTreeMap::new();
-        databases.insert("my_db_alias".into(), database_options);
+        databases.insert("my_db_alias".into(), db);
 
         Self {
             bind_address: "localhost:8432".into(),
             databases,
         }
+    }
+}
+
+fn default_port() -> String {
+    "5432".to_string()
+}
+
+const fn default_pool_size() -> u32 {
+    25
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct Database {
+    pub dbname: String,
+    pub user: String,
+    pub host: String,
+
+    #[serde(default = "default_port")]
+    pub port: String,
+
+    #[serde(default = "default_pool_size")]
+    pub pool_size: u32,
+}
+
+impl Database {
+    pub fn startup_parameters(&self) -> BTreeMap<String, String> {
+        let mut params = BTreeMap::new();
+        params.insert("database".into(), self.dbname.clone());
+        params.insert("user".into(), self.user.clone());
+        params
     }
 }

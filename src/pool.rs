@@ -24,6 +24,19 @@ impl PgConnPool {
             startup_message,
         }
     }
+
+    pub fn pool_size(&self) -> u32 {
+        let dbname = self
+            .startup_message
+            .database_name()
+            .expect("database was set");
+
+        self.config
+            .databases
+            .get(&dbname)
+            .expect("database exists")
+            .pool_size
+    }
 }
 
 #[async_trait]
@@ -43,27 +56,16 @@ impl ManageConnection for PgConnPool {
             .get(&dbname)
             .expect("database config to exist");
 
-        let addr = format!(
-            "{}:{}",
-            database_options.get("host").expect("host was set"),
-            database_options.get("port").expect("port was set")
-        )
-        .parse::<SocketAddr>()
-        .expect("valid socket addr");
+        let addr = format!("{}:{}", database_options.host, database_options.port,)
+            .parse::<SocketAddr>()
+            .expect("valid socket addr");
 
         // Build the server startup_message.
         let mut startup_message = self.startup_message.clone();
-        for (key, value) in database_options.iter() {
-            let param_name = match key.as_str() {
-                "user" => key.clone(),
-                "dbname" => "database".to_string(),
-                _ => {
-                    log::warn!("Found unknown database startup parameter: {:?}", &key);
-                    continue;
-                }
-            };
-
-            startup_message.parameters.insert(param_name, value.clone());
+        for (key, value) in database_options.startup_parameters().iter() {
+            startup_message
+                .parameters
+                .insert(key.clone(), value.clone());
         }
         startup_message
             .parameters
@@ -140,7 +142,10 @@ impl PgPooler {
                 // database?
                 // TODO: Make size params on the config.
                 let manager = PgConnPool::new(self.config.clone(), startup_message);
-                let pool = Pool::builder().max_size(50).build(manager).await?;
+                let pool = Pool::builder()
+                    .max_size(manager.pool_size())
+                    .build(manager)
+                    .await?;
                 pools.insert(pool)
             }
         }

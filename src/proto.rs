@@ -6,9 +6,21 @@ use std::collections::VecDeque;
 pub mod messages {
     use byteorder::{BigEndian, ByteOrder};
 
+    pub fn password_cleartext(password: &str) -> Vec<u8> {
+        let mut msg = Vec::new();
+        msg.push('p' as u8);
+        // Set range aside for size at the end.
+        msg.extend_from_slice(&[0, 0, 0, 0]);
+        msg.extend_from_slice(&password.as_bytes());
+        msg.push(0);
+
+        let msg_proto_size = msg.len() - 1;
+        BigEndian::write_i32(&mut msg[1..5], msg_proto_size as i32);
+        msg
+    }
+
     // concat('md5', md5(concat(md5(concat(password, username)), random-salt)))
     pub fn password_md5(username: &str, password: &str, salt: &[u8]) -> Vec<u8> {
-        log::trace!("SALT: {:?}", salt);
         let mut msg = Vec::new();
         msg.push('p' as u8);
         // Set range aside for size at the end.
@@ -64,7 +76,14 @@ pub mod messages {
         use super::*;
 
         #[test]
-        fn it_can_create_and_md5_password_response() {
+        fn it_can_create_a_cleartext_password_response() {
+            let password = "123456";
+            let expected = &[112, 0, 0, 0, 11, 49, 50, 51, 52, 53, 54, 0];
+            assert_eq!(&password_cleartext(password), expected);
+        }
+
+        #[test]
+        fn it_can_create_an_md5_password_response() {
             let user = "testuser";
             let password = "123456";
             let salt = &[0x17, 0xF5, 0x9E, 0x3E];

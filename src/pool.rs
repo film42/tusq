@@ -96,7 +96,10 @@ impl ManageConnection for PgConnPool {
                         match msg.authentication_type(&server_conn.buffer) {
                             Some(ProtoAuth::AuthOk) => continue,
                             Some(ProtoAuth::AuthCleartextPassword) => {
-                                panic!("Cleartext password not supported")
+                                let msg = messages::password_cleartext(
+                                    &database_options.password.as_ref().expect("password exists"));
+
+                                write_all_with_timeout(&mut server_conn.conn, &msg, None).await?;
                             }
                             Some(ProtoAuth::AuthMD5Password(salt)) => {
                                 let msg = messages::password_md5(&database_options.user, 

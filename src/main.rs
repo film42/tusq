@@ -10,8 +10,10 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
+
     let bind_addr = "127.0.0.1:8432".parse::<SocketAddr>()?;
-    println!("Listening on: {:?}", bind_addr);
+    log::info!("Listening on: {:?}", bind_addr);
     let listener = TcpListener::bind(bind_addr).await?;
     let config = Config::example();
     let pooler = PgPooler::new(config.clone());
@@ -19,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
     loop {
         let (client_conn, _) = listener.accept().await?;
         let client_info = format!("{:?}", client_conn);
-        println!("Client connected: {:?}", client_info);
+        log::info!("Client connected: {:?}", client_info);
         tokio::spawn({
             // Build the client pgconn.
             let mut client_conn = core::PgConn::new(client_conn);
@@ -33,16 +35,18 @@ async fn main() -> anyhow::Result<()> {
                 // Parse the startup flow.
                 let server_pool = match client_conn.handle_startup(pooler).await {
                     Ok(sm) => {
-                        println!(
+                        log::trace!(
                             "Client established and ready for query: {:?}, startup: {:?}",
-                            client_info, sm
+                            client_info,
+                            sm
                         );
                         sm
                     }
                     Err(err) => {
-                        println!(
+                        log::warn!(
                             "Client closed with error: {:?}, conn: {:?}",
-                            err, client_info
+                            err,
+                            client_info
                         );
                         return;
                     }

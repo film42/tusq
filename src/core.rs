@@ -94,7 +94,7 @@ impl PgConn {
         // Check if we received an SSLRequest or StartupMessage.
         let sm = match startup {
             Some(ProtoStartup::SSLRequest) => {
-                println!("Client sent an SSLRequest...denying.");
+                log::trace!("Client sent an SSLRequest...denying.");
                 // If an SSL request, we'll deny for now and continue.
                 write_all_with_timeout(&mut self.conn, &['N' as u8], None).await?;
 
@@ -117,7 +117,7 @@ impl PgConn {
             Some(ProtoStartup::Message(startup_message)) => startup_message,
             None => anyhow::bail!("Missing or incomplete startup message from client"),
         };
-        println!("Client sent a StartupMessage: {:?}", &sm);
+        log::trace!("Client sent a StartupMessage: {:?}", &sm);
 
         self.startup_message = Some(sm.clone());
 
@@ -196,7 +196,7 @@ pub async fn spawn(mut client_conn: PgConn, pool: bb8::Pool<PgConnPool>) -> anyh
                 // detect the beginning of a transaction.
                 'Q' => {}
                 'X' => {
-                    println!("Client sent close request. Closing connection.");
+                    log::info!("Client sent close request. Closing connection.");
                     return Ok(());
                 }
                 msg_type => {
@@ -278,7 +278,7 @@ pub async fn spawn(mut client_conn: PgConn, pool: bb8::Pool<PgConnPool>) -> anyh
                         }
                     }
                     'X' => {
-                        println!("Server is closing the connection!");
+                        log::warn!("Server is closing the connection!");
                         panic!("Server is closing early");
                     }
                     _ => { /* Proxy and continue. */ }
@@ -291,7 +291,7 @@ pub async fn spawn(mut client_conn: PgConn, pool: bb8::Pool<PgConnPool>) -> anyh
 
                 match msg.msg_type() {
                     'X' => {
-                        println!("Client is closing the connection!");
+                        log::warn!("Client is closing the connection!");
                         panic!("Client is closing early");
                     }
                     _ => { /* Proxy and continue. */ }

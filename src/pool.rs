@@ -58,7 +58,7 @@ impl ManageConnection for PgConnPool {
                 "user" => key.clone(),
                 "dbname" => "database".to_string(),
                 _ => {
-                    println!("Found unknown database startup parameter: {:?}", &key);
+                    log::warn!("Found unknown database startup parameter: {:?}", &key);
                     continue;
                 }
             };
@@ -69,7 +69,7 @@ impl ManageConnection for PgConnPool {
             .parameters
             .insert("application_name".into(), "tusq".into());
 
-        println!("Connecting to database: {:?}", startup_message);
+        log::info!("Connecting to database: {:?}", startup_message);
 
         let conn = TcpStream::connect(addr).await?;
         let mut server_conn = PgConn::new(conn);

@@ -121,7 +121,7 @@ impl PgConn {
 
         self.startup_message = Some(sm.clone());
 
-        // Finish auth stuff here.. should probably move later.
+        // TODO: Check startup message and configuration to conduct an Authn flow.
         self.write_auth_ok().await?;
 
         // HACK: This is duplicating work.

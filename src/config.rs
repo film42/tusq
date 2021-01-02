@@ -1,5 +1,7 @@
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
@@ -7,6 +9,14 @@ pub struct Config {
     pub databases: BTreeMap<String, Database>,
 }
 impl Config {
+    pub async fn from_file(path: &str) -> anyhow::Result<Config> {
+        let mut file = File::open(path).await?;
+        let mut contents = vec![];
+        file.read_to_end(&mut contents).await?;
+        let config: Config = toml::from_slice(&contents)?;
+        Ok(config)
+    }
+
     pub fn example() -> Self {
         // Create a map with required database options.
         let db = Database {

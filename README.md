@@ -7,7 +7,7 @@ Yet another playground project to port pgbouncer to rust
 Use cargo to build this project. After running and connecting via psql, you'll see the following:
 
 ```
-$ cargo run --release
+$ cargo run --release -- --config examples/config.toml
 
 [2021-01-02T16:49:38Z INFO  tusq] Listening on: 127.0.0.1:8432
 [2021-01-02T16:49:40Z INFO  tusq] Client connected: "PollEvented { io: Some(TcpStream { addr: 127.0.0.1:8432, peer: 127.0.0.1:35822, fd: 10 }) }"

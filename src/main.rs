@@ -3,11 +3,18 @@ pub mod core;
 pub mod pool;
 pub mod proto;
 
+use clap::Clap;
 use config::Config;
 use pool::PgPooler;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
+
+#[derive(Clap)]
+struct Opts {
+    #[clap(short, long, default_value = "tusq.toml")]
+    config: String,
+}
 
 async fn listen_for_clients(
     listener: TcpListener,
@@ -72,10 +79,12 @@ async fn listen_for_clients(
 async fn main() -> anyhow::Result<()> {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
-    let bind_addr = "127.0.0.1:8432".parse::<SocketAddr>()?;
+    let opts: Opts = Opts::parse();
+    let config = Config::from_file(&opts.config).await?;
+
+    let bind_addr = config.bind_address.parse::<SocketAddr>()?;
     log::info!("Listening on: {:?}", bind_addr);
     let listener = TcpListener::bind(bind_addr).await?;
-    let config = Config::example();
     let pooler = PgPooler::new(config.clone());
 
     // Shutdown signal

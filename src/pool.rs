@@ -133,8 +133,8 @@ impl ManageConnection for PgConnPool {
         Ok(())
     }
 
-    fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
-        false
+    fn has_broken(&self, conn: &mut Self::Connection) -> bool {
+        conn.is_broken
     }
 }
 

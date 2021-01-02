@@ -19,6 +19,7 @@ pub struct PgConn {
     pub(crate) buffer: BytesMut,
     incomplete_buffer: BytesMut,
     incomplete_buffer_len: usize,
+    pub(crate) is_broken: bool,
     pub(crate) msgs: VecDeque<ProtoMessage>,
     pub(crate) server_parameters: BTreeMap<String, String>,
     pub(crate) startup_message: Option<StartupMessage>,
@@ -37,6 +38,7 @@ impl PgConn {
             buffer,
             incomplete_buffer,
             incomplete_buffer_len: 0,
+            is_broken: false,
             parser: ProtoParser::new(),
             msgs: VecDeque::new(),
             server_parameters: BTreeMap::new(),
@@ -87,6 +89,9 @@ impl PgConn {
         mut pooler: PgPooler,
     ) -> anyhow::Result<bb8::Pool<PgConnPool>> {
         let n = self.conn.read(&mut self.buffer).await?;
+        if n == 0 {
+            anyhow::bail!("Client disconnected: EOF");
+        }
 
         // Parse startup message.
         let (_n_parsed, startup) = self.parser.parse_startup(&mut self.buffer[..n])?;
@@ -101,7 +106,7 @@ impl PgConn {
                 // Read and await a startup message after denying SSL.
                 let n = self.conn.read(&mut self.buffer).await?;
                 if n == 0 {
-                    anyhow::bail!("Client disconnected");
+                    anyhow::bail!("Client disconnected: EOF");
                 }
                 let (_n_parsed, startup) = self.parser.parse_startup(&mut self.buffer[..n])?;
 
@@ -157,7 +162,8 @@ impl PgConn {
 
         // Conn has indicated an EOF.
         if n == 0 {
-            return Ok(0);
+            self.is_broken = true;
+            anyhow::bail!("Disconnected: EOF");
         }
 
         // Attempt to parse the buffer.

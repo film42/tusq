@@ -1,6 +1,6 @@
 # tusq
 
-Yet another playground project to port pgbouncer to rust
+A postgres transactional connection pooler written in rust.
 
 ### Running
 

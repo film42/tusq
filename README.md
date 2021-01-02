@@ -9,5 +9,4 @@ Yet another playground project to port pgbouncer to rust
 3. Better configuration.
 4. Benchmarking.
 5. Listen for server closed before yielding server to client.
-6. Graceful shutdown.
 7. Configuration reloading.

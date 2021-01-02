@@ -180,11 +180,19 @@ impl PgConn {
 }
 
 // Manage the entire client life-cycle.
-pub async fn spawn(mut client_conn: PgConn, pool: bb8::Pool<PgConnPool>) -> anyhow::Result<()> {
+pub async fn spawn(
+    mut client_conn: PgConn,
+    pool: bb8::Pool<PgConnPool>,
+    mut shutdown: tokio::sync::watch::Receiver<String>,
+) -> anyhow::Result<()> {
     // Outter transaction loop.
     loop {
-        // Read and parse. Bail if we get an EOF.
-        let n = client_conn.read_and_parse().await?;
+        // Read and parse. Bail if we get an EOF. Close connection if tusq is shutting down.
+        #[rustfmt::skip]
+        let n = tokio::select! {
+            _ = shutdown.changed() => return Ok(()),
+            res = client_conn.read_and_parse() => res?,
+        };
         if n == 0 {
             return Ok(());
         }

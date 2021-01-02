@@ -6,6 +6,29 @@ use std::collections::VecDeque;
 pub mod messages {
     use byteorder::{BigEndian, ByteOrder};
 
+    // concat('md5', md5(concat(md5(concat(password, username)), random-salt)))
+    pub fn password_md5(username: &str, password: &str, salt: &[u8]) -> Vec<u8> {
+        log::trace!("SALT: {:?}", salt);
+        let mut msg = Vec::new();
+        msg.push('p' as u8);
+        // Set range aside for size at the end.
+        msg.extend_from_slice(&[0, 0, 0, 0]);
+        // concat(password, username)
+        let userpass = format!("{}{}", password, username);
+        // md5(ABOVE)
+        let md5 = format!("{:x}", md5::compute(userpass.as_bytes()));
+        // concat(ABOVE, random-salt)
+        let md5: Vec<_> = md5.bytes().chain(salt.iter().map(|x| *x)).collect();
+        // concat('md5', md5(ABOVE))
+        let md5 = format!("md5{:x}", md5::compute(&md5));
+        msg.extend_from_slice(&md5.as_bytes());
+        msg.push(0);
+
+        let msg_proto_size = msg.len() - 1;
+        BigEndian::write_i32(&mut msg[1..5], msg_proto_size as i32);
+        msg
+    }
+
     pub fn auth_ok() -> Vec<u8> {
         let mut msg = [0; 9];
         msg[0] = b'R';
@@ -34,6 +57,26 @@ pub mod messages {
         let msg_proto_size = msg.len() - 1;
         BigEndian::write_i32(&mut msg[1..5], msg_proto_size as i32);
         msg
+    }
+
+    #[cfg(test)]
+    mod test {
+        use super::*;
+
+        #[test]
+        fn it_can_create_and_md5_password_response() {
+            let user = "testuser";
+            let password = "123456";
+            let salt = &[0x17, 0xF5, 0x9E, 0x3E];
+
+            // Underlying md5 password: md5c7342a0451b0de1a27c3e7e31776792e
+            let expected = &[
+                112, 0, 0, 0, 40, 109, 100, 53, 99, 55, 51, 52, 50, 97, 48, 52, 53, 49, 98, 48,
+                100, 101, 49, 97, 50, 55, 99, 51, 101, 55, 101, 51, 49, 55, 55, 54, 55, 57, 50,
+                101, 0,
+            ];
+            assert_eq!(&password_md5(user, password, salt), expected);
+        }
     }
 }
 
@@ -279,6 +322,13 @@ impl ProtoParser {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum ProtoAuth<'a> {
+    AuthOk,
+    AuthMD5Password(&'a [u8]),
+    AuthCleartextPassword,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum ProtoMessage {
     // This message starts and stops within the current buffer.
     Message(char, usize, usize),
@@ -290,6 +340,51 @@ pub enum ProtoMessage {
 }
 
 impl ProtoMessage {
+    // TODO: Make this work with a Partial + PartialComplete.
+    pub fn error_message<'a>(&self, buffer: &[u8]) -> anyhow::Result<Option<String>> {
+        if let ProtoMessage::Message('E', start, end) = self {
+            if end - start < 6 {
+                return Ok(None);
+            }
+            if buffer[start + 6] == 0 {
+                // Empty string error.
+                return Ok(Some("".to_string()));
+            }
+
+            // Convert the buffer error string into a String.
+            let msg = std::str::from_utf8(&buffer[start + 7..*end])?.to_string();
+            return Ok(Some(msg));
+        }
+        Ok(None)
+    }
+
+    // TODO: Make this work with a Partial + PartialComplete.
+    pub fn authentication_type<'a>(&self, buffer: &'a [u8]) -> Option<ProtoAuth<'a>> {
+        if let ProtoMessage::Message('R', start, end) = self {
+            if end - start < 8 {
+                return None;
+            }
+            let auth_type = BigEndian::read_i32(&buffer[start + 5..start + 10]);
+
+            return match auth_type {
+                0 => Some(ProtoAuth::AuthOk),
+                3 => Some(ProtoAuth::AuthCleartextPassword),
+                5 => {
+                    // Check for additional buffer size.
+                    if buffer.len() <= start + 13 {
+                        return None;
+                    }
+                    Some(ProtoAuth::AuthMD5Password(&buffer[start + 9..start + 13]))
+                }
+                _ => {
+                    log::trace!("Missing authentication type code: {}", auth_type);
+                    None
+                }
+            };
+        }
+        None
+    }
+
     // Pull the txn type from a ready for query message.
     // TODO: Make this work with a Partial + PartialComplete.
     pub fn transaction_type(&self, buffer: &[u8]) -> Option<char> {
@@ -444,7 +539,10 @@ mod tests {
 
         let (n, startup_message) = parser.parse_startup(startup_message_packet).unwrap();
         assert_eq!(n, startup_message_packet.len());
-        assert_eq!(startup_message.unwrap(), expected_startup_message());
+        assert_eq!(
+            startup_message.unwrap(),
+            ProtoStartup::Message(expected_startup_message())
+        );
     }
 
     #[test]

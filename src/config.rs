@@ -13,7 +13,8 @@ impl Config {
             port: "5432".into(),
             host: "127.0.0.1".into(),
             dbname: "dispatch_development".into(),
-            user: "postgres".into(),
+            user: "testuser".into(),
+            password: Some("123456".into()),
             pool_size: 25,
         };
 
@@ -41,6 +42,7 @@ pub struct Database {
     pub dbname: String,
     pub user: String,
     pub host: String,
+    pub password: Option<String>,
 
     #[serde(default = "default_port")]
     pub port: String,

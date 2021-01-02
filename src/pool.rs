@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::core::net::write_all_with_timeout;
 use crate::core::PgConn;
-use crate::proto::StartupMessage;
+use crate::proto::{messages, ProtoAuth, StartupMessage};
 use async_trait::async_trait;
 use bb8::{ManageConnection, Pool, PooledConnection};
 use std::collections::btree_map::Entry;
@@ -85,6 +85,31 @@ impl ManageConnection for PgConnPool {
             server_conn.read_and_parse().await?;
             while let Some(msg) = server_conn.msgs.pop_front() {
                 match msg.msg_type() {
+                    'E' => {
+                        log::trace!("An error message was received!");
+
+                        let error_message = msg.error_message(&server_conn.buffer);
+                        anyhow::bail!("Error from server during connect: {:?}", error_message);
+                    }
+                    'R' => {
+                        log::trace!("Authentication requested!");
+                        match msg.authentication_type(&server_conn.buffer) {
+                            Some(ProtoAuth::AuthOk) => continue,
+                            Some(ProtoAuth::AuthCleartextPassword) => {
+                                panic!("Cleartext password not supported")
+                            }
+                            Some(ProtoAuth::AuthMD5Password(salt)) => {
+                                let msg = messages::password_md5(&database_options.user, 
+                                    &database_options.password.as_ref().expect("password exists"), 
+                                    salt);
+
+                                write_all_with_timeout(&mut server_conn.conn, &msg, None).await?;
+                            }
+                            None => {
+                                panic!("Auth message could not find a valid auth request (maybe a missing auth strategy?)")
+                            },
+                        }
+                    }
                     'Z' => {
                         if let Some('I') = msg.transaction_type(&server_conn.buffer) {
                             return Ok(server_conn);
@@ -129,9 +154,7 @@ impl PgPooler {
         startup_message: StartupMessage,
     ) -> anyhow::Result<bb8::Pool<PgConnPool>> {
         // TODO: We assume the DB is always set.
-        let database = startup_message
-            .database_name()
-            .expect("database name was set");
+        let database = startup_message.database_name().expect("database was set");
 
         // Get lock around "pools", get or insert new pool, and clone.
         let mut pools = self.pools.lock().await;

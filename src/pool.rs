@@ -13,12 +13,12 @@ use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub struct PgConnPool {
-    config: Config,
+    config: Arc<Config>,
     startup_message: StartupMessage,
 }
 
 impl PgConnPool {
-    pub fn new(config: Config, startup_message: StartupMessage) -> Self {
+    pub fn new(config: Arc<Config>, startup_message: StartupMessage) -> Self {
         Self {
             config,
             startup_message,
@@ -110,14 +110,14 @@ impl ManageConnection for PgConnPool {
 
 #[derive(Clone)]
 pub struct PgPooler {
-    config: Config,
+    config: Arc<Config>,
     pools: Arc<Mutex<BTreeMap<String, bb8::Pool<PgConnPool>>>>,
 }
 
 impl PgPooler {
     pub fn new(config: Config) -> PgPooler {
         PgPooler {
-            config,
+            config: Arc::new(config),
             pools: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }

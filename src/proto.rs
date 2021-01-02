@@ -55,6 +55,8 @@ pub struct ProtoParser {
     current_startup_parameter_value: Option<String>,
 }
 
+const SSLREQUEST_VERSION: i32 = 80877103;
+
 impl ProtoParser {
     pub fn new() -> Self {
         Self {
@@ -67,13 +69,13 @@ impl ProtoParser {
         }
     }
 
-    // This will parse a StartupMessage using one or more buffers. Unlike
-    // the `parse` method, this will copy data in that buffer to create
+    // This will parse a StartupMessage or SSLRequest using one or more buffers.
+    // Unlike the `parse` method, this will copy data in that buffer to create
     // a shareable startup message.
     pub fn parse_startup(
         &mut self,
         buffer: &[u8],
-    ) -> anyhow::Result<(usize, Option<StartupMessage>)> {
+    ) -> anyhow::Result<(usize, Option<ProtoStartup>)> {
         let mut offset = 0;
 
         // If we don't have a current startup message, be sure to parse
@@ -102,12 +104,26 @@ impl ProtoParser {
                 self.current_msg_bytes_read += 4;
             }
 
+            // Detect if this is an SSL Request
+            if startup_message.protocol_version == SSLREQUEST_VERSION
+                && self.current_msg_length == 8
+            {
+                self.msg_complete();
+                self.current_startup_message = None;
+                return Ok((8, Some(ProtoStartup::SSLRequest)));
+            }
+
             loop {
                 // Check for parameter termination.
                 if buffer[offset] == 0 {
                     // Reset counters.
                     self.msg_complete();
-                    return Ok((offset + 1, self.current_startup_message.take()));
+                    return Ok((
+                        offset + 1,
+                        self.current_startup_message
+                            .take()
+                            .map(ProtoStartup::Message),
+                    ));
                 }
 
                 // Otherwise we are parsing parameters.
@@ -336,6 +352,12 @@ impl ProtoMessage {
 pub enum ProtoStartupMessage {
     Partial(usize, usize),
     PartialComplete(usize),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum ProtoStartup {
+    Message(StartupMessage),
+    SSLRequest,
 }
 
 #[derive(Debug, PartialEq, Clone)]

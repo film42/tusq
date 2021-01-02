@@ -1,5 +1,5 @@
 use crate::pool::{PgConnPool, PgPooler};
-use crate::proto::{messages, ProtoMessage, ProtoParser, StartupMessage};
+use crate::proto::{messages, ProtoMessage, ProtoParser, ProtoStartup, StartupMessage};
 use bytes::BytesMut;
 use futures::future::select;
 use futures::future::Either;
@@ -89,8 +89,36 @@ impl PgConn {
         let n = self.conn.read(&mut self.buffer).await?;
 
         // Parse startup message.
-        let (_n_parsed, startup_message) = self.parser.parse_startup(&mut self.buffer[..n])?;
-        let sm = startup_message.expect("todo: handle an incomplete startup message");
+        let (_n_parsed, startup) = self.parser.parse_startup(&mut self.buffer[..n])?;
+
+        // Check if we received an SSLRequest or StartupMessage.
+        let sm = match startup {
+            Some(ProtoStartup::SSLRequest) => {
+                println!("Client sent an SSLRequest...denying.");
+                // If an SSL request, we'll deny for now and continue.
+                write_all_with_timeout(&mut self.conn, &['N' as u8], None).await?;
+
+                // Read and await a startup message after denying SSL.
+                let n = self.conn.read(&mut self.buffer).await?;
+                if n == 0 {
+                    anyhow::bail!("Client disconnected");
+                }
+                let (_n_parsed, startup) = self.parser.parse_startup(&mut self.buffer[..n])?;
+
+                // Pluck out the startup message or bail with error message.
+                match startup {
+                    Some(ProtoStartup::Message(startup_message)) => startup_message,
+                    Some(msg) => {
+                        anyhow::bail!("Received invalid startup message from client: {:?}", msg)
+                    }
+                    None => anyhow::bail!("Missing or incomplete startup message from client"),
+                }
+            }
+            Some(ProtoStartup::Message(startup_message)) => startup_message,
+            None => anyhow::bail!("Missing or incomplete startup message from client"),
+        };
+        println!("Client sent a StartupMessage: {:?}", &sm);
+
         self.startup_message = Some(sm.clone());
 
         // Finish auth stuff here.. should probably move later.

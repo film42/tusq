@@ -8,7 +8,7 @@ pub mod messages {
 
     pub fn password_cleartext(password: &str) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.push('p' as u8);
+        msg.push(b'p');
         // Set range aside for size at the end.
         msg.extend_from_slice(&[0, 0, 0, 0]);
         msg.extend_from_slice(&password.as_bytes());
@@ -22,7 +22,7 @@ pub mod messages {
     // concat('md5', md5(concat(md5(concat(password, username)), random-salt)))
     pub fn password_md5(username: &str, password: &str, salt: &[u8]) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.push('p' as u8);
+        msg.push(b'p');
         // Set range aside for size at the end.
         msg.extend_from_slice(&[0, 0, 0, 0]);
         // concat(password, username)
@@ -30,7 +30,7 @@ pub mod messages {
         // md5(ABOVE)
         let md5 = format!("{:x}", md5::compute(userpass.as_bytes()));
         // concat(ABOVE, random-salt)
-        let md5: Vec<_> = md5.bytes().chain(salt.iter().map(|x| *x)).collect();
+        let md5: Vec<_> = md5.bytes().chain(salt.iter().copied()).collect();
         // concat('md5', md5(ABOVE))
         let md5 = format!("md5{:x}", md5::compute(&md5));
         msg.extend_from_slice(&md5.as_bytes());
@@ -57,9 +57,9 @@ pub mod messages {
         msg.into()
     }
 
-    pub fn server_parameter(key: &String, value: &String) -> Vec<u8> {
+    pub fn server_parameter(key: &str, value: &str) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.push('S' as u8);
+        msg.push(b'S');
         // Set range aside for size at the end.
         msg.extend_from_slice(&[0, 0, 0, 0]);
         msg.extend_from_slice(key.as_bytes());
@@ -370,7 +370,7 @@ pub enum ProtoMessage {
 
 impl ProtoMessage {
     // TODO: Make this work with a Partial + PartialComplete.
-    pub fn error_message<'a>(&self, buffer: &[u8]) -> anyhow::Result<Option<String>> {
+    pub fn error_message(&self, buffer: &[u8]) -> anyhow::Result<Option<String>> {
         if let ProtoMessage::Message('E', start, end) = self {
             if end - start < 6 {
                 return Ok(None);

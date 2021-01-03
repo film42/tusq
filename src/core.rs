@@ -96,21 +96,21 @@ impl PgConn {
         }
 
         // Parse startup message.
-        let (_n_parsed, startup) = self.parser.parse_startup(&mut self.buffer[..n])?;
+        let (_n_parsed, startup) = self.parser.parse_startup(&self.buffer[..n])?;
 
         // Check if we received an SSLRequest or StartupMessage.
         let sm = match startup {
             Some(ProtoStartup::SSLRequest) => {
                 log::trace!("Client sent an SSLRequest...denying.");
                 // If an SSL request, we'll deny for now and continue.
-                write_all_with_timeout(&mut self.conn, &['N' as u8], None).await?;
+                write_all_with_timeout(&mut self.conn, &[b'N'], None).await?;
 
                 // Read and await a startup message after denying SSL.
                 let n = self.conn.read(&mut self.buffer).await?;
                 if n == 0 {
                     anyhow::bail!("Client disconnected: EOF");
                 }
-                let (_n_parsed, startup) = self.parser.parse_startup(&mut self.buffer[..n])?;
+                let (_n_parsed, startup) = self.parser.parse_startup(&self.buffer[..n])?;
 
                 // Pluck out the startup message or bail with error message.
                 match startup {
@@ -190,7 +190,7 @@ impl PgConn {
 
         let n_parsed = self
             .parser
-            .parse(&mut self.buffer[..n_to_parse], &mut self.msgs)?;
+            .parse(&self.buffer[..n_to_parse], &mut self.msgs)?;
 
         // Copy any unparsed bytes to the incomplete buffer which will be copied
         // to the next buffer when this method is called.
@@ -253,7 +253,7 @@ pub async fn spawn(
         // Write those N bytes to the server.
         write_all_with_timeout(
             &mut server_conn.conn,
-            &mut client_conn.buffer[..n],
+            &client_conn.buffer[..n],
             Some(std::time::Duration::from_secs(5)),
         )
         .await?;
@@ -286,18 +286,14 @@ pub async fn spawn(
                 Op::CopyFromClientToServer(n) => {
                     write_all_with_timeout(
                         &mut server_conn.conn,
-                        &mut client_conn.buffer[..n],
+                        &client_conn.buffer[..n],
                         Some(std::time::Duration::from_secs(30)),
                     )
                     .await?;
                 }
                 Op::CopyFromServerToClient(n) => {
-                    write_all_with_timeout(
-                        &mut client_conn.conn,
-                        &mut server_conn.buffer[..n],
-                        None,
-                    )
-                    .await?;
+                    write_all_with_timeout(&mut client_conn.conn, &server_conn.buffer[..n], None)
+                        .await?;
                 }
             };
 

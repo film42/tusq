@@ -213,7 +213,6 @@ pub async fn spawn(
     // Outter transaction loop.
     loop {
         // Read and parse. Bail if we get an EOF. Close connection if tusq is shutting down.
-        #[rustfmt::skip]
         let n = tokio::select! {
             _ = shutdown.changed() => return Ok(()),
             res = client_conn.read_and_parse() => res?,
@@ -339,8 +338,6 @@ pub mod net {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
     use tokio::time;
-
-    pub struct PgConn {}
 
     // Add helper function to handle a read with timeout.
     pub async fn read_or_timeout(

@@ -96,16 +96,23 @@ async fn main() -> anyhow::Result<()> {
     let (tx, rx) = tokio::sync::watch::channel("".into());
     let wg = waitgroup::WaitGroup::new();
 
-    #[rustfmt::skip]
+    // Listen and await shutdown
     tokio::select! {
         _ = shutdown => {
             // This listener is now dropped.
             log::warn!("Shutdown received... waiting for clients to finish transactions.");
             tx.send("gracefully shutdown".into())?;
-            wg.wait().await;
         }
         res = listen_for_clients(listener, pooler, rx.clone(), wg.worker()) => {
             log::warn!("Listener exited: {:?}", res);
+        }
+    }
+
+    // Wait for shutdown or for second signal.
+    tokio::select! {
+        _ = wg.wait() => { /* Successful shutdown */ }
+        _ = futures::future::select(Box::pin(sigterm.recv()), Box::pin(sigint.recv())) => {
+            log::warn!("Second shutdown signal received! Stopping now.")
         }
     }
 

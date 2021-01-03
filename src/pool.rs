@@ -102,7 +102,7 @@ impl ManageConnection for PgConnPool {
                                 write_all_with_timeout(&mut server_conn.conn, &msg, None).await?;
                             }
                             Some(ProtoAuth::AuthMD5Password(salt)) => {
-                                let msg = messages::password_md5(&database_options.user, 
+                                let msg = messages::password_md5(&database_options.user,
                                     &database_options.password.as_ref().expect("password exists"), 
                                     salt);
 

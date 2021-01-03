@@ -121,6 +121,10 @@ impl PgConn {
                     None => anyhow::bail!("Missing or incomplete startup message from client"),
                 }
             }
+            Some(ProtoStartup::CancelRequest) => {
+                log::trace!("Cancel request received.");
+                anyhow::bail!("Cancel request is not supported.")
+            }
             Some(ProtoStartup::Message(startup_message)) => startup_message,
             None => anyhow::bail!("Missing or incomplete startup message from client"),
         };

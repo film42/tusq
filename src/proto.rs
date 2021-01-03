@@ -117,7 +117,8 @@ pub struct ProtoParser {
     current_startup_parameter_value: Option<String>,
 }
 
-const SSLREQUEST_VERSION: i32 = 80877103;
+const CANCEL_REQUEST_VERSION: i32 = 80877102;
+const SSL_REQUEST_VERSION: i32 = 80877103;
 
 impl ProtoParser {
     pub fn new() -> Self {
@@ -166,8 +167,17 @@ impl ProtoParser {
                 self.current_msg_bytes_read += 4;
             }
 
+            // Detect if this is a Cancel Request
+            if startup_message.protocol_version == CANCEL_REQUEST_VERSION
+                && self.current_msg_length == 16
+            {
+                self.msg_complete();
+                self.current_startup_message = None;
+                return Ok((16, Some(ProtoStartup::CancelRequest)));
+            }
+
             // Detect if this is an SSL Request
-            if startup_message.protocol_version == SSLREQUEST_VERSION
+            if startup_message.protocol_version == SSL_REQUEST_VERSION
                 && self.current_msg_length == 8
             {
                 self.msg_complete();
@@ -472,6 +482,7 @@ pub enum ProtoStartupMessage {
 pub enum ProtoStartup {
     Message(StartupMessage),
     SSLRequest,
+    CancelRequest,
 }
 
 #[derive(Debug, PartialEq, Clone)]

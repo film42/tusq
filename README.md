@@ -35,3 +35,4 @@ You can also specify `port`, and `pool_size` for each database.
 3. Better configuration.
 4. Benchmarking.
 5. Configuration reloading.
+6. Canceling queries.

@@ -28,8 +28,8 @@ pub struct PgConn {
 
 impl PgConn {
     pub fn new(conn: TcpStream) -> Self {
-        let mut buffer = BytesMut::with_capacity(8096);
-        buffer.resize(8096, 0);
+        let mut buffer = BytesMut::with_capacity(4096);
+        buffer.resize(4096, 0);
 
         let mut incomplete_buffer = BytesMut::with_capacity(8);
         incomplete_buffer.resize(8, 0);
@@ -226,7 +226,7 @@ pub async fn spawn(
             match msg.msg_type() {
                 // We only check for complete or partial messages here. The point is to
                 // detect the beginning of a transaction.
-                'Q' => {}
+                'P' | 'S' | 'Q' | 'D' | 'B' | 'E' => {}
                 'X' => {
                     log::info!("Client sent close request. Closing connection.");
                     return Ok(());

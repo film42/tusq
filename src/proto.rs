@@ -274,7 +274,7 @@ impl ProtoParser {
         // Is this OK? Can I just remove the last 4 from the range since the offset
         // left with too few bytes will just exit anyways?
         // Update: I think so.
-        while offset < buffer.len() - 5 {
+        while offset < buffer.len() - 4 {
             // Handle partial message.
             if self.current_msg_type.is_some() {
                 let remaining = self.current_msg_length - self.current_msg_bytes_read;
@@ -733,5 +733,18 @@ mod tests {
         assert_eq!(n, packet.len());
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0], ProtoMessage::Message('D', 0, packet.len() - 1));
+    }
+
+    #[test]
+    fn it_can_parse_a_sync_msg() {
+        let packet = &[b'S', 0, 0, 0, 4];
+
+        let mut msgs = VecDeque::new();
+        let mut parser = ProtoParser::new();
+        let n = parser.parse(packet, &mut msgs).unwrap();
+
+        assert_eq!(n, packet.len());
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0], ProtoMessage::Message('S', 0, packet.len() - 1));
     }
 }

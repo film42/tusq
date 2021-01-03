@@ -20,6 +20,7 @@ pub struct PgConn {
     incomplete_buffer: BytesMut,
     incomplete_buffer_len: usize,
     pub(crate) is_broken: bool,
+    pub(crate) is_active_transaction: bool,
     pub(crate) msgs: VecDeque<ProtoMessage>,
     pub(crate) server_parameters: BTreeMap<String, String>,
     pub(crate) startup_message: Option<StartupMessage>,
@@ -39,6 +40,7 @@ impl PgConn {
             incomplete_buffer,
             incomplete_buffer_len: 0,
             is_broken: false,
+            is_active_transaction: false,
             parser: ProtoParser::new(),
             msgs: VecDeque::new(),
             server_parameters: BTreeMap::new(),
@@ -147,6 +149,19 @@ impl PgConn {
         Ok(pool)
     }
 
+    // Ensure the connection is open and in a "would block" state, meaning
+    // there is no outstanding buffer.
+    pub fn is_valid(&mut self) -> anyhow::Result<bool> {
+        match self.conn.try_read(&mut self.buffer) {
+            Ok(0) => anyhow::bail!("Connection is closed: EOF"),
+            Ok(_) => {
+                anyhow::bail!("Connection has readable buffer. Closing due to uncertain state.")
+            }
+            Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => Ok(true),
+            Err(err) => anyhow::bail!("Error checking connection: {:?}", err),
+        }
+    }
+
     #[inline]
     pub async fn read_and_parse(&mut self) -> anyhow::Result<usize> {
         // Copy any incomplete buffer data to new buffer.
@@ -228,6 +243,9 @@ pub async fn spawn(
             .await
             .map_err(|err| anyhow::anyhow!("Connection Poool: {:?}", err))?;
 
+        // Mark that we're entering a transaction for the connection pool to clean up.
+        server_conn.is_active_transaction = true;
+
         // Write those N bytes to the server.
         write_all_with_timeout(
             &mut server_conn.conn,
@@ -288,6 +306,8 @@ pub async fn spawn(
                 match msg.msg_type() {
                     'Z' => {
                         if let Some('I') = msg.transaction_type(&server_conn.buffer) {
+                            // Signal the connection is safe to be used by a new client.
+                            server_conn.is_active_transaction = false;
                             break 'transaction;
                         }
                     }

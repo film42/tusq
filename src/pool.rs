@@ -129,12 +129,13 @@ impl ManageConnection for PgConnPool {
         }
     }
 
-    async fn is_valid(&self, _conn: &mut PooledConnection<'_, Self>) -> Result<(), Self::Error> {
+    async fn is_valid(&self, conn: &mut PooledConnection<'_, Self>) -> Result<(), Self::Error> {
+        conn.is_valid()?;
         Ok(())
     }
 
     fn has_broken(&self, conn: &mut Self::Connection) -> bool {
-        conn.is_broken
+        conn.is_broken || conn.is_active_transaction
     }
 }
 

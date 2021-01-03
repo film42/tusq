@@ -34,5 +34,4 @@ You can also specify `port`, and `pool_size` for each database.
 2. Smarter startup message parsing.
 3. Better configuration.
 4. Benchmarking.
-5. Listen for server closed before yielding server to client.
-7. Configuration reloading.
+5. Configuration reloading.

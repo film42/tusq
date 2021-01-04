@@ -1,6 +1,7 @@
 # tusq
 
-A postgres transactional connection pooler written in rust.
+A postgres transactional connection pooler written in rust. It currenlty uses an 8KB buffer for each client or server connection. It is as fast as pgbouncer in basic `select * from table` benchmarks.
+My goal for this project is to write a postgres connection pooler that is very fast and written in a highly readable way, making outside contribution easy.
 
 ### Running
 
@@ -36,3 +37,8 @@ You can also specify `port`, and `pool_size` for each database.
 4. Benchmarking.
 5. Configuration reloading.
 6. Canceling queries.
+
+
+### License
+
+MIT

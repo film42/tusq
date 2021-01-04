@@ -27,14 +27,16 @@ pub struct PgConn {
 }
 
 impl PgConn {
-    pub fn new(conn: TcpStream) -> Self {
-        let mut buffer = BytesMut::with_capacity(4096);
-        buffer.resize(4096, 0);
+    pub fn new(conn: TcpStream) -> anyhow::Result<Self> {
+        conn.set_nodelay(true)?;
+
+        let mut buffer = BytesMut::with_capacity(8192);
+        buffer.resize(8192, 0);
 
         let mut incomplete_buffer = BytesMut::with_capacity(8);
         incomplete_buffer.resize(8, 0);
 
-        Self {
+        Ok(Self {
             conn,
             buffer,
             incomplete_buffer,
@@ -45,7 +47,7 @@ impl PgConn {
             msgs: VecDeque::new(),
             server_parameters: BTreeMap::new(),
             startup_message: None,
-        }
+        })
     }
 
     pub fn database_name(&self) -> Option<String> {

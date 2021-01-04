@@ -74,7 +74,7 @@ impl ManageConnection for PgConnPool {
         log::info!("Connecting to database: {:?}", startup_message);
 
         let conn = TcpStream::connect(addr).await?;
-        let mut server_conn = PgConn::new(conn);
+        let mut server_conn = PgConn::new(conn)?;
 
         // Send startup message.
         let msg = startup_message.as_bytes();

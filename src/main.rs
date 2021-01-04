@@ -28,7 +28,7 @@ async fn listen_for_clients(
         log::info!("Client connected: {:?}", client_info);
         tokio::spawn({
             // Build the client pgconn.
-            let mut client_conn = core::PgConn::new(client_conn);
+            let mut client_conn = core::PgConn::new(client_conn)?;
 
             // Build a db pool (unique per conn for now).
             let pooler = pooler.clone();

@@ -1,7 +1,31 @@
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
+use tokio::sync::{RwLock, RwLockReadGuard};
+
+#[derive(Debug, Clone)]
+pub struct UpdatableConfig {
+    inner: Arc<RwLock<Config>>,
+}
+
+impl UpdatableConfig {
+    pub fn new(config: Config) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(config)),
+        }
+    }
+
+    pub async fn get(&self) -> RwLockReadGuard<'_, Config> {
+        self.inner.read().await
+    }
+
+    pub async fn update(&self, new_config: Config) {
+        let mut config = self.inner.write().await;
+        *config = new_config;
+    }
+}
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {

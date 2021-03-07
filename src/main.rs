@@ -4,7 +4,7 @@ pub mod pool;
 pub mod proto;
 
 use clap::Clap;
-use config::Config;
+use config::{Config, UpdatableConfig};
 use pool::PgPooler;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -85,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
     let bind_addr = config.bind_address.parse::<SocketAddr>()?;
     log::info!("Listening on: {:?}", bind_addr);
     let listener = TcpListener::bind(bind_addr).await?;
+    let config = UpdatableConfig::new(config);
     let pooler = PgPooler::new(config.clone());
 
     // Shutdown signal

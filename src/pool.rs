@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::UpdatableConfig;
 use crate::core::net::write_all_with_timeout;
 use crate::core::PgConn;
 use crate::proto::{messages, ProtoAuth, StartupMessage};
@@ -13,25 +13,27 @@ use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub struct PgConnPool {
-    config: Arc<Config>,
+    config: UpdatableConfig,
     startup_message: StartupMessage,
 }
 
 impl PgConnPool {
-    pub fn new(config: Arc<Config>, startup_message: StartupMessage) -> Self {
+    pub fn new(config: UpdatableConfig, startup_message: StartupMessage) -> Self {
         Self {
             config,
             startup_message,
         }
     }
 
-    pub fn pool_size(&self) -> u32 {
+    pub async fn pool_size(&self) -> u32 {
         let dbname = self
             .startup_message
             .database_name()
             .expect("database was set");
 
         self.config
+            .get()
+            .await
             .databases
             .get(&dbname)
             .expect("database exists")
@@ -50,11 +52,15 @@ impl ManageConnection for PgConnPool {
             .database_name()
             .expect("database was set");
 
-        let database_options = self
-            .config
-            .databases
-            .get(&dbname)
-            .expect("database config to exist");
+        let database_options = {
+            self.config
+                .get()
+                .await
+                .databases
+                .get(&dbname)
+                .expect("database config to exist")
+                .clone()
+        };
 
         let addr = format!("{}:{}", database_options.host, database_options.port,)
             .parse::<SocketAddr>()
@@ -144,14 +150,14 @@ impl ManageConnection for PgConnPool {
 
 #[derive(Clone)]
 pub struct PgPooler {
-    config: Arc<Config>,
+    config: UpdatableConfig,
     pools: Arc<Mutex<BTreeMap<String, bb8::Pool<PgConnPool>>>>,
 }
 
 impl PgPooler {
-    pub fn new(config: Config) -> PgPooler {
+    pub fn new(config: UpdatableConfig) -> PgPooler {
         PgPooler {
-            config: Arc::new(config),
+            config,
             pools: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -173,7 +179,7 @@ impl PgPooler {
                 // TODO: Make size params on the config.
                 let manager = PgConnPool::new(self.config.clone(), startup_message);
                 let pool = Pool::builder()
-                    .max_size(manager.pool_size())
+                    .max_size(manager.pool_size().await)
                     .build(manager)
                     .await?;
                 pools.insert(pool)

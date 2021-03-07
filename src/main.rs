@@ -97,6 +97,28 @@ async fn main() -> anyhow::Result<()> {
     let (tx, rx) = tokio::sync::watch::channel("".into());
     let wg = waitgroup::WaitGroup::new();
 
+    tokio::spawn({
+        let config_path = opts.config.clone();
+        let config = config.clone();
+        let mut sighup = signal(SignalKind::hangup()).expect("signal should register");
+
+        async move {
+            loop {
+                sighup.recv().await;
+                log::warn!("Reloading config from disk...");
+
+                match Config::from_file(&config_path).await {
+                    // Swap the config.
+                    Ok(new_config) => {
+                        config.update(new_config).await;
+                        log::warn!("Reload done.");
+                    }
+                    Err(err) => log::warn!("Reload failed: {:?}.", err),
+                }
+            }
+        }
+    });
+
     // Listen and await shutdown
     tokio::select! {
         _ = shutdown => {

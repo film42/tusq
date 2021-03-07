@@ -1,12 +1,40 @@
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
+use tokio::sync::{RwLock, RwLockReadGuard};
+
+#[derive(Debug, Clone)]
+pub struct UpdatableConfig {
+    inner: Arc<RwLock<Config>>,
+}
+
+impl UpdatableConfig {
+    pub fn new(config: Config) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(config)),
+        }
+    }
+
+    pub async fn get(&self) -> RwLockReadGuard<'_, Config> {
+        self.inner.read().await
+    }
+
+    pub async fn update(&self, new_config: Config) {
+        let mut config = self.inner.write().await;
+        *config = new_config;
+    }
+}
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     pub bind_address: String,
     pub databases: BTreeMap<String, Database>,
+
+    #[serde(default = "SystemTime::now")]
+    pub updated_at: SystemTime,
 }
 impl Config {
     pub async fn from_file(path: &str) -> anyhow::Result<Config> {
@@ -33,6 +61,7 @@ impl Config {
         databases.insert("my_db_alias".into(), db);
 
         Self {
+            updated_at: SystemTime::now(),
             bind_address: "localhost:8432".into(),
             databases,
         }

@@ -4,7 +4,7 @@ pub mod pool;
 pub mod proto;
 
 use clap::Clap;
-use config::Config;
+use config::{Config, UpdatableConfig};
 use pool::PgPooler;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -85,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
     let bind_addr = config.bind_address.parse::<SocketAddr>()?;
     log::info!("Listening on: {:?}", bind_addr);
     let listener = TcpListener::bind(bind_addr).await?;
+    let config = UpdatableConfig::new(config);
     let pooler = PgPooler::new(config.clone());
 
     // Shutdown signal
@@ -95,6 +96,28 @@ async fn main() -> anyhow::Result<()> {
     // Client close signal
     let (tx, rx) = tokio::sync::watch::channel("".into());
     let wg = waitgroup::WaitGroup::new();
+
+    tokio::spawn({
+        let config_path = opts.config.clone();
+        let config = config.clone();
+        let mut sighup = signal(SignalKind::hangup()).expect("signal should register");
+
+        async move {
+            loop {
+                sighup.recv().await;
+                log::warn!("Reloading config from disk...");
+
+                match Config::from_file(&config_path).await {
+                    // Swap the config.
+                    Ok(new_config) => {
+                        config.update(new_config).await;
+                        log::warn!("Reload done.");
+                    }
+                    Err(err) => log::warn!("Reload failed: {:?}.", err),
+                }
+            }
+        }
+    });
 
     // Listen and await shutdown
     tokio::select! {

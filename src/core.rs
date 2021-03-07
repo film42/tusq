@@ -5,6 +5,7 @@ use futures::future::select;
 use futures::future::Either;
 use net::write_all_with_timeout;
 use std::collections::{BTreeMap, VecDeque};
+use std::time::SystemTime;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 
@@ -24,6 +25,7 @@ pub struct PgConn {
     pub(crate) msgs: VecDeque<ProtoMessage>,
     pub(crate) server_parameters: BTreeMap<String, String>,
     pub(crate) startup_message: Option<StartupMessage>,
+    pub(crate) created_at: SystemTime,
 }
 
 impl PgConn {
@@ -47,6 +49,7 @@ impl PgConn {
             msgs: VecDeque::new(),
             server_parameters: BTreeMap::new(),
             startup_message: None,
+            created_at: SystemTime::now(),
         })
     }
 

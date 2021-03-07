@@ -139,6 +139,11 @@ impl ManageConnection for PgConnPool {
     }
 
     async fn is_valid(&self, conn: &mut PooledConnection<'_, Self>) -> Result<(), Self::Error> {
+        // First check to see if the configuration has updated since we used this last.
+        if self.config.get().await.updated_at > conn.created_at {
+            anyhow::bail!("The configuration has changed since this connection was created");
+        }
+
         conn.is_valid()?;
         Ok(())
     }

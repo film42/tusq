@@ -3,14 +3,14 @@ pub mod core;
 pub mod pool;
 pub mod proto;
 
-use clap::Clap;
+use clap::Parser;
 use config::{Config, UpdatableConfig};
 use pool::PgPooler;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 
-#[derive(Clap)]
+#[derive(Parser)]
 struct Opts {
     #[clap(short, long, default_value = "tusq.toml")]
     config: String,

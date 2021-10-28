@@ -3,14 +3,14 @@ pub mod core;
 pub mod pool;
 pub mod proto;
 
-use clap::Clap;
+use clap::Parser;
 use config::{Config, UpdatableConfig};
 use pool::PgPooler;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 
-#[derive(Clap)]
+#[derive(Parser)]
 struct Opts {
     #[clap(short, long, default_value = "tusq.toml")]
     config: String,
@@ -75,9 +75,31 @@ async fn listen_for_clients(
     }
 }
 
+fn say_hello() {
+    log::info!(
+        r#"
+        ,----,
+      ,/   .`|
+    ,`   .'  :
+  ;    ;     /                     ,----.
+.'___,/    ,'       ,--,          /   /  \-.
+|    :     |      ,'_ /|  .--.--.|   :    :|
+;    |.';  ; .--. |  | : /  /    |   | .\  .
+`----'  |  ,'_ /| :  . ||  :  /`..   ; |:  |
+    '   :  |  ' | |  . .|  :  ;_ '   .  \  |
+    |   |  |  | ' |  | | \  \    `\   `.   |
+    '   :  :  | : ;  ; |  `----.   `--'""| |
+    ;   |.''  :  `--'   \/  /`--'  / |   | |
+    '---'  :  ,      .-.'--'.     /  |   | :
+            `--`----'     `--'---'   `---'.|
+                                       `---`"#
+    );
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
+    say_hello();
 
     let opts: Opts = Opts::parse();
     let config = Config::from_file(&opts.config).await?;

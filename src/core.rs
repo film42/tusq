@@ -91,17 +91,48 @@ impl PgConn {
         Ok(())
     }
 
+    async fn read_entire_message(&mut self) -> anyhow::Result<Vec<u8>> {
+        let mut agg_buffer = Vec::new();
+
+        let mut n = self.conn.read(&mut self.buffer).await?;
+        if n == 0 {
+            anyhow::bail!("client disconnected: eof");
+        }
+        let msg_size = match ProtoParser::msg_size(&self.buffer[..n]) {
+            Some(s) => s,
+            None => anyhow::bail!("buffer msg too small"),
+        };
+        let mut remaining = msg_size;
+
+        loop {
+            remaining = remaining - n;
+            agg_buffer.extend_from_slice(&self.buffer[..n]);
+
+            // Break and return buffer (msg is within buffer).
+            if remaining <= 0 {
+                break;
+            }
+
+            // Remaining to read.
+            let n_to_read = std::cmp::min(remaining, self.buffer.len());
+
+            // We need to read again (buffer too small).
+            n = self.conn.read(&mut self.buffer[..n_to_read]).await?;
+            if n == 0 {
+                anyhow::bail!("client disconnected: eof");
+            }
+        }
+
+        return Ok(agg_buffer);
+    }
+
     pub async fn handle_startup(
         &mut self,
         mut pooler: PgPooler,
     ) -> anyhow::Result<bb8::Pool<PgConnPool>> {
-        let n = self.conn.read(&mut self.buffer).await?;
-        if n == 0 {
-            anyhow::bail!("Client disconnected: EOF");
-        }
+        let startup_buffer = self.read_entire_message().await?;
 
-        // Parse startup message.
-        let (_n_parsed, startup) = self.parser.parse_startup(&self.buffer[..n])?;
+        let (_n_parsed, startup) = self.parser.parse_startup(&startup_buffer)?;
 
         // Check if we received an SSLRequest or StartupMessage.
         let sm = match startup {
@@ -111,11 +142,8 @@ impl PgConn {
                 write_all_with_timeout(&mut self.conn, &[b'N'], None).await?;
 
                 // Read and await a startup message after denying SSL.
-                let n = self.conn.read(&mut self.buffer).await?;
-                if n == 0 {
-                    anyhow::bail!("Client disconnected: EOF");
-                }
-                let (_n_parsed, startup) = self.parser.parse_startup(&self.buffer[..n])?;
+                let startup_buffer = self.read_entire_message().await?;
+                let (_n_parsed, startup) = self.parser.parse_startup(&startup_buffer)?;
 
                 // Pluck out the startup message or bail with error message.
                 match startup {
@@ -134,7 +162,6 @@ impl PgConn {
             None => anyhow::bail!("Missing or incomplete startup message from client"),
         };
         log::trace!("Client sent a StartupMessage: {:?}", &sm);
-
         self.startup_message = Some(sm.clone());
 
         // TODO: Check startup message and configuration to conduct an Authn flow.

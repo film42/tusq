@@ -27,14 +27,13 @@ bind_address = "127.0.0.1:8432"
 some_db = { user = "postgres", password = "123456", dbname = "yolo_db", host = "127.0.0.1" }
 ```
 
-You can also specify `port`, and `pool_size` for each database.
+You can also specify `port` and `pool_size` for each database.
 
 You can send a `SIGHUP` to the running tusq process for a live config reload.
 
 ### TODO
 
 1. Support SSL.
-2. Smarter startup message parsing.
 3. Better configuration.
 4. Benchmarking.
 5. Canceling queries.

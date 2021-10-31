@@ -1,4 +1,4 @@
 bind_address = "127.0.0.1:8432"
 
 [databases]
-my_db_alias = { user = "testuser", password = "123456", pool_size = 5, dbname = "dispatch_development", host = "127.0.0.1" }
+my_db_alias = { user = "postgres", password = "123456", pool_size = 5, dbname = "test_db", host = "127.0.0.1" }

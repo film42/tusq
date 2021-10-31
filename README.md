@@ -34,7 +34,6 @@ You can send a `SIGHUP` to the running tusq process for a live config reload.
 ### TODO
 
 1. Support SSL.
-2. Smarter startup message parsing.
 3. Better configuration.
 4. Benchmarking.
 5. Canceling queries.

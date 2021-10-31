@@ -132,6 +132,14 @@ impl ProtoParser {
         }
     }
 
+    #[inline]
+    pub fn msg_size(buffer: &[u8]) -> Option<usize> {
+        if buffer.len() < 4 {
+            return None;
+        }
+        Some(BigEndian::read_i32(&buffer[0..4]) as usize)
+    }
+
     // This will parse a StartupMessage or SSLRequest using one or more buffers.
     // Unlike the `parse` method, this will copy data in that buffer to create
     // a shareable startup message.

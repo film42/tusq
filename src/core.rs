@@ -367,16 +367,18 @@ pub async fn spawn(
 }
 
 pub mod net {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpStream;
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
     use tokio::time;
 
     // Add helper function to handle a read with timeout.
-    pub async fn read_or_timeout(
-        conn: &mut TcpStream,
+    pub async fn read_or_timeout<Conn>(
+        conn: &mut Conn,
         buffer: &mut [u8],
         timeout: std::time::Duration,
-    ) -> anyhow::Result<Option<usize>> {
+    ) -> anyhow::Result<Option<usize>>
+    where
+        Conn: AsyncRead + ?Sized + Unpin,
+    {
         let inner = match time::timeout(timeout, conn.read(buffer)).await {
             // Check for success or error from write.
             Ok(Ok(n)) => Ok(Some(n)),
@@ -390,11 +392,14 @@ pub mod net {
     }
 
     // Add helper function to handle a write with timeout.
-    pub async fn write_all_with_timeout(
-        conn: &mut TcpStream,
+    pub async fn write_all_with_timeout<Conn>(
+        conn: &mut Conn,
         buffer: &[u8],
         timeout: Option<std::time::Duration>,
-    ) -> anyhow::Result<Option<usize>> {
+    ) -> anyhow::Result<Option<usize>>
+    where
+        Conn: AsyncWrite + ?Sized + Unpin,
+    {
         if timeout.is_none() {
             conn.write_all(buffer).await?;
             return Ok(Some(buffer.len()));

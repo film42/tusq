@@ -43,7 +43,7 @@ impl PgConnPool {
 
 #[async_trait]
 impl ManageConnection for PgConnPool {
-    type Connection = PgConn;
+    type Connection = PgConn<TcpStream>;
     type Error = anyhow::Error;
 
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {

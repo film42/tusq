@@ -6,7 +6,7 @@ use futures::future::Either;
 use net::write_all_with_timeout;
 use std::collections::{BTreeMap, VecDeque};
 use std::time::SystemTime;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
 
 enum Op {
@@ -14,8 +14,11 @@ enum Op {
     CopyFromServerToClient(usize),
 }
 
-pub struct PgConn {
-    pub(crate) conn: TcpStream,
+pub struct PgConn<Conn>
+where
+    Conn: AsyncRead + AsyncWrite + Sized + Unpin,
+{
+    pub(crate) conn: Conn,
     parser: ProtoParser,
     pub(crate) buffer: BytesMut,
     incomplete_buffer: BytesMut,
@@ -28,10 +31,26 @@ pub struct PgConn {
     pub(crate) created_at: SystemTime,
 }
 
-impl PgConn {
-    pub fn new(conn: TcpStream) -> anyhow::Result<Self> {
-        conn.set_nodelay(true)?;
+impl PgConn<TcpStream> {
+    // Ensure the connection is open and in a "would block" state, meaning
+    // there is no outstanding buffer.
+    pub fn is_valid(&mut self) -> anyhow::Result<bool> {
+        match self.conn.try_read(&mut self.buffer) {
+            Ok(0) => anyhow::bail!("Connection is closed: EOF"),
+            Ok(_) => {
+                anyhow::bail!("Connection has readable buffer. Closing due to uncertain state.")
+            }
+            Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => Ok(true),
+            Err(err) => anyhow::bail!("Error checking connection: {:?}", err),
+        }
+    }
+}
 
+impl<Conn> PgConn<Conn>
+where
+    Conn: AsyncRead + AsyncWrite + Sized + Unpin,
+{
+    pub fn new(conn: Conn) -> anyhow::Result<Self> {
         let mut buffer = BytesMut::with_capacity(8192);
         buffer.resize(8192, 0);
 
@@ -185,19 +204,6 @@ impl PgConn {
         Ok(pool)
     }
 
-    // Ensure the connection is open and in a "would block" state, meaning
-    // there is no outstanding buffer.
-    pub fn is_valid(&mut self) -> anyhow::Result<bool> {
-        match self.conn.try_read(&mut self.buffer) {
-            Ok(0) => anyhow::bail!("Connection is closed: EOF"),
-            Ok(_) => {
-                anyhow::bail!("Connection has readable buffer. Closing due to uncertain state.")
-            }
-            Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => Ok(true),
-            Err(err) => anyhow::bail!("Error checking connection: {:?}", err),
-        }
-    }
-
     #[inline]
     pub async fn read_and_parse(&mut self) -> anyhow::Result<usize> {
         // Copy any incomplete buffer data to new buffer.
@@ -237,11 +243,14 @@ impl PgConn {
 }
 
 // Manage the entire client life-cycle.
-pub async fn spawn(
-    mut client_conn: PgConn,
+pub async fn spawn<Conn>(
+    mut client_conn: PgConn<Conn>,
     pool: bb8::Pool<PgConnPool>,
     mut shutdown: tokio::sync::watch::Receiver<String>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    Conn: AsyncRead + AsyncWrite + Sized + Unpin,
+{
     // Outter transaction loop.
     loop {
         // Read and parse. Bail if we get an EOF. Close connection if tusq is shutting down.

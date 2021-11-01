@@ -7,7 +7,7 @@ use clap::Parser;
 use config::{Config, UpdatableConfig};
 use pool::PgPooler;
 use std::net::SocketAddr;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::signal::unix::{signal, SignalKind};
 
 #[derive(Parser)]
@@ -27,8 +27,11 @@ async fn listen_for_clients(
         let client_info = format!("{:?}", client_conn);
         log::info!("Client connected: {:?}", client_info);
         tokio::spawn({
+            // Disable nagle!
+            client_conn.set_nodelay(true)?;
+
             // Build the client pgconn.
-            let mut client_conn = core::PgConn::new(client_conn)?;
+            let mut client_conn = core::PgConn::<TcpStream>::new(client_conn)?;
 
             // Build a db pool (unique per conn for now).
             let pooler = pooler.clone();
